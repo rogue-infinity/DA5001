@@ -1,3 +1,11 @@
 venv3.11/
 venv3.14/
 .DS_Store
+HW_3/data/MNIST/raw/train-labels-idx1-ubyte.gz
+HW_3/data/MNIST/raw/t10k-images-idx3-ubyte
+HW_3/data/MNIST/raw/t10k-images-idx3-ubyte.gz
+HW_3/data/MNIST/raw/t10k-labels-idx1-ubyte
+HW_3/data/MNIST/raw/t10k-labels-idx1-ubyte.gz
+HW_3/data/MNIST/raw/train-images-idx3-ubyte
+HW_3/data/MNIST/raw/train-images-idx3-ubyte.gz
+HW_3/data/MNIST/raw/train-labels-idx1-ubyte
