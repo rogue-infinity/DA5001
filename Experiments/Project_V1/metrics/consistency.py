@@ -35,6 +35,6 @@ def mask_consistency(predictions_k: list[torch.Tensor]) -> float:
         return 0.0
 
     preds   = torch.stack(predictions_k)            # [K, L]
-    mode    = preds.cpu().mode(dim=0).values.to(preds.device)  # [L]
+    mode    = preds.mode(dim=0).values  # [L]
     agree   = (preds == mode.unsqueeze(0)).float()  # [K, L]
     return agree.mean().item()

@@ -51,8 +51,8 @@ def compute_elbo_derivatives(
         dldt   : [T]  dL/dt
         d2ldt2 : [T]  d²L/dt²
     """
-    t_np      = timestep_grid.numpy()
-    elbo_np   = elbo_per_t.numpy()
+    t_np      = timestep_grid.detach().cpu().numpy()
+    elbo_np   = elbo_per_t.detach().cpu().numpy()
     dldt_np   = np.gradient(elbo_np,  t_np)
     d2ldt2_np = np.gradient(dldt_np,  t_np)
     return (
