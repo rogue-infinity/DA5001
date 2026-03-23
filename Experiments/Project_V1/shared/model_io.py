@@ -46,7 +46,7 @@ def load_model_and_tokenizer(
         tokenizer.pad_token = tokenizer.eos_token
         _log.info("  pad_token set to eos_token (%r)", tokenizer.eos_token)
 
-    kwargs: dict = dict(torch_dtype=dtype, trust_remote_code=True)
+    kwargs: dict = dict(dtype=dtype, trust_remote_code=True)
     if attn_implementation is not None:
         kwargs["attn_implementation"] = attn_implementation
 

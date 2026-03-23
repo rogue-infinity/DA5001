@@ -1,0 +1,31 @@
+[collect] Watching run r_f0d32018 on machine 387206 ...
+[collect] Poll interval: 300s
+[collect] Checkpoints → /Users/skumar/Desktop/DA5001/Experiments/Project_V1/checkpoints
+[collect] Logs        → /Users/skumar/Desktop/DA5001/Experiments/Project_V1/logs
+
+[11:32:29] state=running
+[11:45:50] state=running
+[11:59:34] state=instance-missing
+[12:08:05] state=running
+[12:13:07] state=running
+[12:18:09] state=running
+[12:23:10] state=running
+[12:28:12] state=running
+[13:18:26] state=running
+[13:23:28] state=running
+[13:28:29] state=running
+[13:33:31] state=running
+[13:38:32] state=running
+[13:43:34] state=running
+[16:53:51] state=instance-missing
+[16:59:55] state=running
+[17:04:57] state=running
+[17:09:59] state=running
+[17:15:01] state=running
+[17:20:02] state=running
+[17:25:04] state=running
+[17:30:06] state=running
+[18:05:06] state=running
+[18:10:08] state=running
+[18:15:13] state=running
+[18:20:15] state=running

@@ -103,7 +103,7 @@ def extract_metrics(
     if not hidden_available:
         log.warning("Hidden states not available — hidden_norms and cosine_sim will be zeros.")
 
-    timestep_grid = torch.linspace(1.0 / n_timesteps, 1.0, n_timesteps)  # [T]
+    timestep_grid = torch.linspace(1.0 / n_timesteps, 1.0, n_timesteps, device=device)  # [T]
 
     # Accumulators (one entry per timestep after the inner K loop)
     elbo_per_t:         list[float]                    = []
@@ -202,10 +202,10 @@ def extract_metrics(
             )
 
     # ── Phase 3: convert accumulators → tensors ───────────────────────────────
-    elbo_tensor        = torch.tensor(elbo_per_t,        dtype=torch.float32)
-    entropy_tensor     = torch.tensor(entropy_per_t,     dtype=torch.float32)
+    elbo_tensor        = torch.tensor(elbo_per_t,        dtype=torch.float32, device=device)
+    entropy_tensor     = torch.tensor(entropy_per_t,     dtype=torch.float32, device=device)
     entropy_full_mat   = torch.stack(entropy_full_per_t)          # [T, L]
-    consistency_tensor = torch.tensor(consistency_per_t, dtype=torch.float32)
+    consistency_tensor = torch.tensor(consistency_per_t, dtype=torch.float32, device=device)
     hidden_norm_mat    = torch.stack(hidden_norm_per_t)           # [T, Nl]
     cosine_sim_mat     = torch.stack(cosine_sim_per_t)            # [T, Nl]
 
@@ -221,7 +221,7 @@ def extract_metrics(
         gradient_norm(model, token_ids, mask_id, float(timestep_grid[i].item()), rng=rng)
         for i in grad_t_indices
     ]
-    grad_norms = torch.tensor(grad_norm_list, dtype=torch.float32)
+    grad_norms = torch.tensor(grad_norm_list, dtype=torch.float32, device=device)
 
     elapsed = time.time() - t_start
     log.info("Extraction complete in %.1fs", elapsed)
