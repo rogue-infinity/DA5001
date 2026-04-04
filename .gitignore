@@ -35,4 +35,16 @@ datasets/
 # HW3 MNIST raw data
 HW_3/data/
 
+# Weights & Biases run directories (keep wandb_export/ JSON)
+wandb/
+
+# Fine-tuned model checkpoints (large, reproducible)
+models/
+
+# dllm subpackage (has its own .git — install via pip install -e dllm/)
+**/code/dllm/
+
+# Remote run artefacts — raw tensors already covered by *.pt above
+# Stage logs and wandb_export are kept (they are the results)
+
 

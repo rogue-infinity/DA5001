@@ -1,0 +1,78 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: Currently logged in as: shailesh-kvr (shailesh-kvr-indian-institute-of-technology-madras) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run mucyjygi
+wandb: Tracking run with wandb version 0.25.1
+wandb: Run data is saved locally in /home/Project/Project/wandb/run-20260404_211318-mucyjygi
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run classifiers
+wandb: ⭐️ View project at https://wandb.ai/shailesh-kvr-indian-institute-of-technology-madras/da5001-mia
+wandb: 🚀 View run at https://wandb.ai/shailesh-kvr-indian-institute-of-technology-madras/da5001-mia/runs/mucyjygi
+Loaded X (600, 112), y (600,), class balance: 50.00% members
+
+Fold 1/5...
+  XGB AUC: 0.9797  |  MLP AUC: 0.9536
+
+Fold 2/5...
+  XGB AUC: 0.9772  |  MLP AUC: 0.9797
+
+Fold 3/5...
+  XGB AUC: 0.9975  |  MLP AUC: 0.9981
+
+Fold 4/5...
+  XGB AUC: 0.9994  |  MLP AUC: 1.0000
+
+Fold 5/5...
+  XGB AUC: 0.9981  |  MLP AUC: 0.9903
+
+Computing overall OOF metrics with bootstrap CIs...
+
+XGBoost OOF:
+  AUC:         0.9893 [0.0000, 0.0000]
+  TPR@0.1%FPR: 0.7492 [0.6263, 0.9164]
+  TPR@1.0%FPR: 0.8891 [0.6699, 0.9495]
+  TPR@10.0%FPR: 0.9731 [0.9512, 0.9904]
+
+MLP OOF:
+  AUC:         0.9856 [0.0000, 0.0000]
+  TPR@0.1%FPR: 0.5445 [0.3630, 0.8000]
+  TPR@1.0%FPR: 0.7726 [0.4239, 0.9212]
+  TPR@10.0%FPR: 0.9707 [0.9468, 0.9890]
+
+Saved results/classifier_results.pt
+wandb: uploading requirements.txt; updating run metadata
+wandb: uploading requirements.txt
+wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: uploading output.log; uploading config.yaml
+wandb: uploading history steps 0-5, summary, console lines 1-31
+wandb: 
+wandb: Run history:
+wandb: classifiers/fold1_mlp_auc ▁
+wandb: classifiers/fold1_xgb_auc ▁
+wandb: classifiers/fold2_mlp_auc ▁
+wandb: classifiers/fold2_xgb_auc ▁
+wandb: classifiers/fold3_mlp_auc ▁
+wandb: classifiers/fold3_xgb_auc ▁
+wandb: classifiers/fold4_mlp_auc ▁
+wandb: classifiers/fold4_xgb_auc ▁
+wandb: classifiers/fold5_mlp_auc ▁
+wandb: classifiers/fold5_xgb_auc ▁
+wandb:                        +4 ...
+wandb: 
+wandb: Run summary:
+wandb: classifiers/fold1_mlp_auc 0.95361
+wandb: classifiers/fold1_xgb_auc 0.97972
+wandb: classifiers/fold2_mlp_auc 0.97972
+wandb: classifiers/fold2_xgb_auc 0.97722
+wandb: classifiers/fold3_mlp_auc 0.99806
+wandb: classifiers/fold3_xgb_auc 0.9975
+wandb: classifiers/fold4_mlp_auc 1
+wandb: classifiers/fold4_xgb_auc 0.99944
+wandb: classifiers/fold5_mlp_auc 0.99028
+wandb: classifiers/fold5_xgb_auc 0.99806
+wandb:                        +4 ...
+wandb: 
+wandb: 🚀 View run classifiers at: https://wandb.ai/shailesh-kvr-indian-institute-of-technology-madras/da5001-mia/runs/mucyjygi
+wandb: ⭐️ View project at: https://wandb.ai/shailesh-kvr-indian-institute-of-technology-madras/da5001-mia
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260404_211318-mucyjygi/logs
+Done.
