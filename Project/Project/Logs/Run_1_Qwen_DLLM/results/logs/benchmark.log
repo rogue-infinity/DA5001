@@ -1,0 +1,41 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: Currently logged in as: shailesh-kvr (shailesh-kvr-indian-institute-of-technology-madras) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run 1d2pc9vx
+wandb: Tracking run with wandb version 0.25.1
+wandb: Run data is saved locally in /home/Project/Project/wandb/run-20260404_211331-1d2pc9vx
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run benchmark
+wandb: ⭐️ View project at https://wandb.ai/shailesh-kvr-indian-institute-of-technology-madras/da5001-mia
+wandb: 🚀 View run at https://wandb.ai/shailesh-kvr-indian-institute-of-technology-madras/da5001-mia/runs/1d2pc9vx
+
+Method           AUC                     TPR@0.1%FPR  TPR@1%FPR   TPR@10%FPR
+───────────────  ──────────────────────  ───────────  ──────────  ──────────
+SAMA (baseline)  0.3689 [0.3398,0.3941]  0.0±0.0%     0.0±0.0%    0.5±1.0%  
+XGBoost (ours)   0.9893 [0.9815,0.9953]  74.9±14.5%   88.9±14.0%  97.3±2.0% 
+MLP (ours)       0.9856 [0.9768,0.9924]  54.5±21.9%   77.3±24.9%  97.1±2.1% 
+
+wandb: uploading artifact run-1d2pc9vx-benchmarkresults-4vBAiA; updating run metadata
+wandb: uploading artifact run-1d2pc9vx-benchmarkresults-4vBAiA
+wandb: uploading media/table/benchmark/results_0_2276be69b9052f2170f6.table.json; uploading wandb-summary.json; uploading config.yaml
+wandb: 
+wandb: Run history:
+wandb:          benchmark/MLP_ours_auc ▁
+wandb:      benchmark/MLP_ours_tpr1fpr ▁
+wandb:     benchmark/SAMA_baseline_auc ▁
+wandb: benchmark/SAMA_baseline_tpr1fpr ▁
+wandb:      benchmark/XGBoost_ours_auc ▁
+wandb:  benchmark/XGBoost_ours_tpr1fpr ▁
+wandb: 
+wandb: Run summary:
+wandb:          benchmark/MLP_ours_auc 0.98497
+wandb:      benchmark/MLP_ours_tpr1fpr 0.77313
+wandb:     benchmark/SAMA_baseline_auc 0.36666
+wandb: benchmark/SAMA_baseline_tpr1fpr 0
+wandb:      benchmark/XGBoost_ours_auc 0.98892
+wandb:  benchmark/XGBoost_ours_tpr1fpr 0.88927
+wandb: 
+wandb: 🚀 View run benchmark at: https://wandb.ai/shailesh-kvr-indian-institute-of-technology-madras/da5001-mia/runs/1d2pc9vx
+wandb: ⭐️ View project at: https://wandb.ai/shailesh-kvr-indian-institute-of-technology-madras/da5001-mia
+wandb: Synced 5 W&B file(s), 1 media file(s), 2 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260404_211331-1d2pc9vx/logs
+Done.

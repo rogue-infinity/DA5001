@@ -1,0 +1,16 @@
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+Loading tokenizer from /home/.cache/huggingface/hub/models--dllm-hub--Qwen3-0.6B-diffusion-mdlm-v0.1/snapshots/39c33255701becfc61f3052d4b86c80b6d36603f
+
+Loading MIMIR github split='ngram_13_0.2'...
+  Total rows: 740, columns: ['member', 'nonmember', 'member_neighbors', 'nonmember_neighbors']
+  Using 300 rows → 300 members + 300 non-members
+
+Tokenizing members (max_length=128)...
+  members:   0%|          | 0/5 [00:00<?, ?it/s]  members: 100%|██████████| 5/5 [00:00<00:00, 123.86it/s]
+  Saved data/members.pt — shape: torch.Size([300, 128])
+
+Tokenizing nonmembers (max_length=128)...
+  nonmembers:   0%|          | 0/5 [00:00<?, ?it/s]  nonmembers: 100%|██████████| 5/5 [00:00<00:00, 138.06it/s]
+  Saved data/nonmembers.pt — shape: torch.Size([300, 128])
+
+Done.
