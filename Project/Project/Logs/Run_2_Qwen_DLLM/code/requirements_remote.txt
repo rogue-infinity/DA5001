@@ -1,0 +1,16 @@
+# torch/torchvision are inherited from the JarvisLabs system site-packages
+# (pytorch template). Do NOT re-pin here — the extra-index-url for the torch
+# wheel registry causes uv to resolve 'requests' from that index (v2.28.1),
+# which conflicts with datasets' requirement of requests>=2.32.2.
+transformers>=4.46,<5.0
+datasets>=2.20,<3.0
+peft>=0.10          # required by SAMA/attack/misc/models.py (module-level import)
+wandb
+xgboost
+scikit-learn>=1.3
+numpy
+tqdm
+huggingface_hub
+accelerate
+sentencepiece
+tabulate

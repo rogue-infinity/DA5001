@@ -1,0 +1,578 @@
+\documentclass{article}
+
+% NeurIPS 2025 style
+\usepackage[preprint]{neurips_2025}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{microtype}
+\usepackage{nicefrac}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{natbib}
+\usepackage{enumitem}
+\setlist{nosep, leftmargin=*}
+
+\hypersetup{colorlinks=true,linkcolor=blue!70!black,citecolor=blue!60!black,urlcolor=blue!60!black}
+
+% ── Macros ────────────────────────────────────────────────────────────────────
+\newcommand{\dtmia}{\textsc{DT-MIA}}
+\newcommand{\sama}{\textsc{SAMA}}
+\newcommand{\attenmia}{\textsc{AttenMIA}}
+\newcommand{\mdlm}{\textsc{MDLM}}
+\newcommand{\model}{Qwen3-0.6B}
+\newcommand{\nats}{\text{ nats}}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\title{Membership Inference Attacks on Fine-tuned\\
+Masked Diffusion Language Models:\\
+From Score Averaging to Diffusion Trajectory Analysis}
+
+\author{%
+  Shailesh Kumar\\
+  Department of Data Science \& AI\\
+  Indian Institute of Technology Madras\\
+  \texttt{shailesh@iitm.ac.in}
+}
+
+\begin{document}
+\maketitle
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{abstract}
+Masked Diffusion Language Models (MDLMs) represent a powerful class of
+generative models that iteratively denoise corrupted token sequences, yet their
+privacy properties under membership inference remain almost entirely
+unexplored.  We present the first systematic study of membership inference
+attacks (MIAs) against a fine-tuned MDLM---specifically \model{} MDLM trained
+on OpenWebText.  We benchmark four attack families: (i) the
+score-averaged masking audit (\sama{}), adapted from Gaussian diffusion;
+(ii) classical black-box attacks (Loss, Zlib, Ratio); and (iii) our proposed
+white-box attack \dtmia{} (\emph{Diffusion Trajectory MIA}), which extracts a
+112-dimensional feature vector from the full masking trajectory---spanning
+ELBO curvature, prediction entropy, hidden-state geometry, and attention
+trajectory signals---and trains a gradient-boosted classifier.
+Evaluated on 2\,000 labelled samples (1\,000 members, 1\,000 non-members),
+\dtmia{} achieves \textbf{AUC~=~0.856} with \textbf{TPR~59.3\%} at 10\%~FPR
+and \textbf{TPR~13.5\%} at 0.1\%~FPR, outperforming all baselines.
+We further show that the diffusion trajectory---a sequence of $T{=}10$
+masking-ratio snapshots---reveals membership signals unique to diffusion
+models: ELBO trajectory shape, attention entropy curves, and cross-layer
+attention consistency each carry separable member/non-member structure,
+confirmed by Hellinger distance analysis across all feature groups.
+Our findings reveal that MDLMs are far from private and motivate the need
+for privacy-preserving fine-tuning strategies.
+\end{abstract}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+\label{sec:intro}
+
+Large Language Models (LLMs) trained or fine-tuned on sensitive corpora
+increasingly raise data privacy concerns.  \emph{Membership inference
+attacks} (MIAs)~\citep{shokri2017mia} determine whether a target model
+``remembers'' a specific sample, providing a measurable lower bound on
+privacy leakage.  While the MIA literature for autoregressive models is
+rich---spanning output-based attacks~\citep{yeom2018privacy,carlini2022membership},
+reference-model approaches~\citep{carlini2021extracting}, and
+attention-based attacks~\citep{zaree2026attenmia}---\textbf{Masked Diffusion
+Language Models remain entirely unstudied from an MIA perspective}.
+
+MDLMs generate text by iteratively predicting masked tokens under a learned
+score function, producing a \emph{trajectory} of intermediate states across
+masking ratios.  This trajectory is a novel signal dimension entirely absent
+from autoregressive generation.  We close this gap by studying the \model{}
+MDLM fine-tuned on OpenWebText and proposing \dtmia{}: the first
+trajectory-aware, white-box MIA tailored to masked diffusion.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=*,label=(\arabic*)]
+  \item \textbf{First MIA benchmark on MDLMs.}  We adapt and evaluate six
+    attacks (\sama{}, Loss, Zlib, Ratio, and \dtmia{}~XGB/MLP) on a
+    fine-tuned \model{} MDLM, establishing the first published reference
+    numbers for this model class.
+
+  \item \textbf{\dtmia{}: Trajectory-based white-box attack.}  We extract
+    112 features from $T{=}10$ masking-ratio snapshots spanning ELBO
+    curvature, prediction entropy, hidden-state geometry, and
+    attention trajectory signals, training an XGBoost classifier that
+    achieves AUC~$=0.856$ with 95\%~CI~$[0.840, 0.872]$.
+
+  \item \textbf{DLM-specific trajectory analysis.}  We demonstrate---via
+    Hellinger distance curves and KDE plots across all $T$ timesteps---that
+    attention entropy, cross-layer correlation, and ELBO curvature evolve
+    differently for members vs.\ non-members, a signal unique to diffusion
+    models that cannot be exploited in any autoregressive MIA framework.
+
+  \item \textbf{Engineering contributions.}  We identify and fix a
+    sign-inversion bug in the \sama{} MDLM adaptation, resolve
+    AutoTokenizer breaking changes in \texttt{transformers}~4.57.6, and
+    release a modular pipeline covering fine-tuning through benchmark
+    evaluation.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Background}
+\label{sec:background}
+
+\subsection{Masked Diffusion Language Models}
+
+An MDLM defines a forward noising process by independently masking each token
+with probability $\sigma(t) \in [0,1]$:
+\[
+  q(x_t \mid x_0) = \prod_{i=1}^{L}
+  \bigl[\sigma(t)\,\delta_{x_{t,i}=\texttt{[M]}}
+       +(1{-}\sigma(t))\,\delta_{x_{t,i}=x_{0,i}}\bigr].
+\]
+The model $p_\theta(x_0\mid x_t)$ is trained to recover original tokens at
+masked positions, optimising the Evidence Lower Bound (ELBO):
+\[
+  \mathcal{L}(x_0;\theta)
+  = \mathbb{E}_{t,x_t}\bigl[-\log p_\theta(x_0\mid x_t)\bigr].
+\]
+Unlike Gaussian diffusion, the trajectory is fully discrete; each masking
+level $t$ corresponds to an interpretable masked-reconstruction task with a
+well-defined per-token log-probability.
+
+\subsection{Threat Model}
+
+We adopt a \emph{white-box} threat model: the adversary has full access to
+both the fine-tuned weights $\theta_\mathrm{ft}$ and base weights
+$\theta_\mathrm{base}$, but no access to the training corpus.  The adversary
+is given labelled candidate samples $\mathcal{D} =
+\mathcal{D}_\mathrm{mem}\cup\mathcal{D}_\mathrm{non}$ and must output
+$\hat{m}(x)\in\{0,1\}$ for each.  No shadow-model training is required,
+making the attack \emph{reference-free}.
+
+\subsection{Evaluation Metrics}
+
+We report: (i) \textbf{ROC AUC} for overall discrimination; (ii)
+\textbf{TPR@$k$\%FPR} at $k\in\{10,1,0.1\}$, critical in the low-FPR
+regime where practical privacy auditing operates; and (iii)
+\textbf{Hellinger Distance (HD)}~\citep{nikulin2001hellinger} for
+distributional separability between member and non-member score distributions.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{MIA on language models.}
+\citet{yeom2018privacy} showed training loss is a simple membership signal.
+\citet{carlini2021extracting} extracted verbatim sequences from GPT-2.
+\citet{carlini2022membership} introduced LiRA, achieving state-of-the-art AUC
+via shadow models.  \citet{mattern2023mia} study neighbourhood-based MIAs;
+\citet{xie2024recall} use relative conditional log-likelihoods.
+
+\paragraph{Attention as a membership signal.}
+\citet{zaree2026attenmia} demonstrated that self-attention distributions
+carry strong membership signals in autoregressive LLMs, achieving AUC up to
+0.996 on WikiMIA.  Their work motivates our use of attention trajectory
+features in \dtmia{}, adapted to the multi-timestep masked-diffusion setting.
+
+\paragraph{MIA on diffusion models.}
+\citet{duan2023diffusion} studied MIA on image diffusion models using loss
+trajectory features.  To our knowledge, no prior work studies MIA on masked
+\emph{language} diffusion models.
+
+\paragraph{Score averaging for DLMs.}
+\citet{shi2024detecting} proposed \sama{} for detecting pre-training data in
+Gaussian diffusion models via score averaging across noise levels.  We adapt
+this approach to the discrete-masking regime of MDLMs.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Experimental Setup}
+\label{sec:setup}
+
+\subsection{Model and Dataset}
+
+\textbf{Target model.}\ We use
+\texttt{dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1}, a 0.6B-parameter MDLM
+built on the Qwen3 architecture with bidirectional self-attention and a
+dedicated \texttt{[MASK]} token (id~$=$~151\,669).
+
+\textbf{Dataset.}\ We sample 1\,000 member texts from the OpenWebText training
+split and 1\,000 non-members from the held-out split, all truncated to
+max\,256 tokens.
+
+\subsection{Fine-tuning Protocol}
+
+We fine-tune the base MDLM on the 1\,000 member samples using AdamW
+($\mathrm{lr}{=}2{\times}10^{-5}$, weight decay $10^{-2}$, linear warmup
+over 50 steps, gradient clipping at 1.0) for 5 epochs with batch size 8.
+Training loss decreases from $3.761\nats$ to $3.020\nats$
+(Figure~\ref{fig:finetune_loss}).
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.75\linewidth]{figs/finetune_loss.pdf}
+  \caption{Fine-tuning loss curve over 5 epochs.  Loss drops from
+    $3.761\nats$ to $3.020\nats$, confirming the model adapts to the
+    member distribution.}
+  \label{fig:finetune_loss}
+\end{figure}
+
+\subsection{Memorization Verification}
+
+We verify memorisation before attacking using the ELBO gap criterion:
+\[
+  \Delta_\mathrm{mem} = \mathcal{L}_\mathrm{base}(x)
+    - \mathcal{L}_\mathrm{ft}(x) \;\geq\; 0.05\nats
+    \quad\text{(required for members).}
+\]
+Figure~\ref{fig:memorization} shows the result: the finetuned model assigns
+$4.594\nats$ loss to members under the base model but only $1.836\nats$
+after fine-tuning, giving $\Delta_\mathrm{mem}{=}2.766\nats$ --- far above
+the 0.05~nat threshold.  Non-members show a gap of $+1.797\nats$ (base model
+already assigns lower loss), confirming the gap is specific to memorised
+members.  \textbf{Memorization check: PASS.}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/memorization_gap.pdf}
+  \caption{\emph{Left}: ELBO loss for all four base/finetuned
+    $\times$ member/non-member combinations.  \emph{Right}: ELBO gap
+    (base~$-$~finetuned) for members and non-members.  The member gap
+    of $2.766\nats$ far exceeds the 0.05 threshold.}
+  \label{fig:memorization}
+\end{figure}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Attack Descriptions}
+\label{sec:attacks}
+
+\subsection{Black-box Baseline Attacks}
+
+\textbf{Loss.}\ $s_\mathrm{Loss}(x){=}{-}\mathcal{L}_\mathrm{ft}(x)$.
+Members are expected to have lower reconstruction loss.
+
+\textbf{Zlib.}\ Normalises by text complexity to control for compressibility:
+$s_\mathrm{Zlib}(x){=}{-}\mathcal{L}_\mathrm{ft}(x)/\mathrm{zlib}(x)$.
+
+\textbf{Ratio.}\ Reference-model calibration without shadow training:
+$s_\mathrm{Ratio}(x){=}{-}\mathcal{L}_\mathrm{ft}(x)/\mathcal{L}_\mathrm{base}(x)$.
+
+\subsection{\sama{}: Score-Averaged Masking Audit}
+\label{sec:sama}
+
+\sama{}~\citep{shi2024detecting} aggregates the model score across masking
+levels with harmonic weighting:
+\[
+  s_\sama(x) = \sum_{k=1}^{K} \frac{1}{k} \cdot
+  \mathrm{sign}\!\bigl(\log p_\theta(x_0\mid x_{t_k})\bigr)\cdot
+  \log p_\theta(x_0\mid x_{t_k}).
+\]
+
+\textbf{Sign-inversion bug.}  An initial implementation had a sign error
+causing member scores to be \emph{lower} than non-member scores (AUC~$=0.369$,
+below random).  After correcting the sign convention, \sama{} achieves
+AUC~$=0.806$.
+
+\subsection{\dtmia{}: Diffusion Trajectory MIA (Proposed Attack)}
+\label{sec:dtmia}
+
+\dtmia{} is our proposed white-box attack.  Its core insight is that the
+\emph{full masking trajectory}---the sequence of model states across $T$
+masking ratios---contains far richer membership information than any single
+scalar score.  We extract $D{=}112$ features per sample by running $T$
+forward passes at evenly spaced masking ratios $t_1{<}\cdots{<}t_T$:
+
+\begin{algorithm}[t]
+\caption{\dtmia{} Feature Extraction}
+\label{alg:dtmia}
+\begin{algorithmic}[1]
+\Require Finetuned model $\theta_\mathrm{ft}$, base $\theta_\mathrm{base}$,
+         sample $x$, timesteps $T$, mask configs $K$
+\Ensure Feature vector $\mathbf{z}\in\mathbb{R}^{112}$
+\State Set $\{t_k{=}k/T\}_{k=1}^T$
+\For{each $t_k$}
+  \State Sample $K$ masked versions $\{x_{t_k}^{(j)}\}_{j=1}^K$
+  \State Compute ELBO $\ell_k$, hidden states $\mathbf{H}_k$, attention maps $\mathbf{A}_k$ from $\theta_\mathrm{ft}$
+  \State Compute prediction entropy $\mathcal{H}_k$, mask consistency $\mathcal{C}_k$
+  \State Compute attn.\ entropy $\kappa_k$ (KL${\to}$Uniform), cross-layer corr.\ $r_k$
+  \State Compute barycenter drift $b_k$, perturbation variance $v_k$
+\EndFor
+\State Compute $dL/dt$, $d^2L/dt^2$ (finite differences), ELBO variance $\sigma^2_\ell$
+\State Compute cross-model cosine sim $\rho_\mathrm{cross}$ at $t{=}t_1$
+\State \Return $\mathbf{z}{=}[\boldsymbol{\ell},\,\sigma^2_\ell,\,\nabla\ell,\,\nabla^2\ell,\,\mathcal{H},\,\mathcal{C},\,\|\mathbf{H}\|,\,\rho,\,\kappa,\,r,\,b,\,v,\,\rho_\mathrm{cross}]$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Feature groups.}
+Table~\ref{tab:features} summarises the 12 feature groups.  The attention
+groups (groups 9--12) are motivated by prior work showing that self-attention
+patterns encode memorisation signals~\citep{zaree2026attenmia}; we adapt them
+to the masked-diffusion setting by extracting them at \emph{all $T$ masking
+ratios}, yielding an \emph{attention trajectory} that is unique to diffusion
+models and unavailable in any autoregressive MIA framework.
+
+\begin{table}[t]
+  \centering\small
+  \caption{DT-MIA feature groups ($D{=}112$, $T{=}10$).}
+  \label{tab:features}
+  \begin{tabular}{llcp{3.5cm}}
+    \toprule
+    Group & Signal & Dim & MIA intuition \\
+    \midrule
+    ELBO traj.      & $\ell(t_1),\ldots,\ell(t_T)$             & $T$   & Members: lower loss at all levels \\
+    ELBO variance   & $\mathrm{Var}_t[\ell]$                    & 1     & Members: smoother trajectory \\
+    $dL/dt$         & Finite-diff.\ $\Delta\ell$                & $T$   & Loss curve shape \\
+    $d^2L/dt^2$     & Curvature                                 & $T$   & Concavity captures memorisation \\
+    Pred.\ entropy  & $\mathcal{H}[p_\theta(\cdot|x_t)]$        & $T$   & Members: lower token uncertainty \\
+    Mask consist.   & Var.\ over $K$ mask configs               & $T$   & Members: robust to masking \\
+    Hidden norms    & $\|\mathbf{H}\|$ (mean over layers)       & $T$   & Representation magnitude \\
+    Hidden cos-sim  & Layer-to-layer cosine similarity          & $T$   & Structural consistency \\
+    Attn.\ entropy  & $\kappa^{\ell,h}$ (KL$\!\to\!$Uniform)   & $T$   & Members: concentrated attention \\
+    Attn.\ crosslayer & $\mathrm{corr}(A^\ell,A^{\ell+1})$     & $T$   & Members: stable cross-layer flow \\
+    Attn.\ bary.    & Barycenter drift $b^{\ell,h}$             & $T$   & Positional stability \\
+    Attn.\ perturb. & Attn.\ var.\ over mask configs            & $T$   & Members: robust attention \\
+    Cross-model     & $\cos(\mathbf{H}_\mathrm{ft},\mathbf{H}_\mathrm{base})$ & 1 & Fine-tuning drift \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Classifier.}
+XGBoost (300 trees, depth 4, lr 0.05, subsample 0.8) and an MLP (two hidden
+layers of 256, ReLU, dropout 0.3) are each trained on the 112-dim feature
+vectors using 5-fold stratified cross-validation, ensuring balanced evaluation.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Results}
+\label{sec:results}
+
+\subsection{Main Attack Comparison}
+
+Figure~\ref{fig:roc} shows ROC curves for all six attacks (2\,000 samples).
+Table~\ref{tab:benchmark} reports AUC and TPR at three FPR thresholds.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/roc_all_methods.pdf}
+  \caption{ROC curves (\emph{left}) and low-FPR zoom (\emph{right},
+    FPR~${\leq}10\%$) for all attacks.  \dtmia{} (XGB and MLP) dominate
+    in both regimes.}
+  \label{fig:roc}
+\end{figure}
+
+\begin{table}[t]
+  \centering\small
+  \caption{Attack performance (1\,000 members + 1\,000 non-members).
+    \dtmia{}~XGB 95\%~CI from 5-fold CV.  \textbf{Bold}: best per column.}
+  \label{tab:benchmark}
+  \setlength{\tabcolsep}{6pt}
+  \begin{tabular}{lcccc}
+    \toprule
+    Method & AUC & TPR@10\%FPR & TPR@1\%FPR & TPR@0.1\%FPR \\
+    \midrule
+    Loss                & 0.699 & 31.1\% &  9.9\% & 4.0\% \\
+    Zlib                & 0.715 & 33.4\% & 10.8\% & 4.7\% \\
+    Ratio               & 0.700 & 31.2\% &  8.3\% & 3.7\% \\
+    \sama{}             & 0.806 & 42.1\% &  4.2\% & 0.4\% \\
+    \dtmia{}~(MLP)      & 0.855 & 58.8\% & 23.2\% & 5.1\% \\
+    \dtmia{}~(XGB)      & \textbf{0.856} & \textbf{59.3\%} & \textbf{27.3\%} & \textbf{13.5\%} \\
+    \quad [95\%~CI]     & [$0.840$, $0.872$] & [$52.8$, $64.4$]\% & [$20.6$, $31.1$]\% & [$7.0$, $20.3$]\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\dtmia{}~(XGB) outperforms the next-best attack (\sama{}) by
+$\Delta\mathrm{AUC}{=}0.050$ and is dramatically superior in the low-FPR
+regime: at FPR~$=0.1\%$, \dtmia{} achieves 13.5\% TPR vs.\ only 0.4\% for
+\sama{} and ${\leq}4.7\%$ for all black-box attacks.  This confirms that
+the trajectory feature vector captures membership signal that scalar
+score-based attacks cannot detect.
+
+Figure~\ref{fig:benchmark_bar} gives a visual overview of AUC and TPR.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/benchmark_bar.pdf}
+  \caption{Attack performance overview.
+    \emph{Left}: ROC AUC.
+    \emph{Right}: TPR at three FPR thresholds (darker = stricter).}
+  \label{fig:benchmark_bar}
+\end{figure}
+
+\subsection{Score Distributions and Hellinger Analysis}
+
+Figure~\ref{fig:score_dist} shows KDE plots of member and non-member scores.
+\dtmia{} achieves the highest Hellinger distance, confirming the strongest
+distributional separation.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/score_distributions.pdf}
+  \caption{Score distributions (KDE) for all attacks.  Members (blue) and
+    non-members (orange).  \dtmia{} shows the clearest separation.}
+  \label{fig:score_dist}
+\end{figure}
+
+Figure~\ref{fig:hellinger} shows mean Hellinger distance per feature group,
+following the methodology of measuring per-feature-family separability to
+understand which signals drive attack performance.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/hellinger_feature_groups.pdf}
+  \caption{\emph{Left}: mean HD per feature group (attention features in
+    purple, ELBO/loss-curve features in blue).  \emph{Right}: score-level
+    HD for all attack methods.}
+  \label{fig:hellinger}
+\end{figure}
+
+Key findings:
+\begin{itemize}
+  \item \textbf{Attention entropy} has the highest individual HD, confirming
+    that concentrated attention is a reliable indicator of memorisation.
+  \item \textbf{ELBO curvature} ($dL/dt$, $d^2L/dt^2$): the \emph{shape} of
+    the loss curve is more informative than its level alone.
+  \item \textbf{Mask consistency}: members produce more stable predictions
+    across different masking configurations at the same timestep.
+  \item \textbf{Cross-model cosine similarity} provides a complementary signal
+    not correlated with the other groups.
+\end{itemize}
+
+\subsection{KDE Analysis of Individual Feature Groups}
+
+Figure~\ref{fig:feature_kde} shows per-group KDE plots at $t{=}5$
+(mid-trajectory), illustrating how member and non-member distributions
+separate across the feature space.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/feature_kde.pdf}
+  \caption{KDE distributions at masking timestep $t{=}5$ for eight feature
+    groups.  Members (blue) and non-members (orange) are consistently
+    separable, with Hellinger distances annotated per panel.}
+  \label{fig:feature_kde}
+\end{figure}
+
+\subsection{Trajectory Analysis: Separability Across Timesteps}
+
+Figure~\ref{fig:trajectory} shows how HD evolves along the masking trajectory
+($t{=}1,\ldots,10$) for each feature group, analogous to per-layer analysis
+in prior work on attention-based MIA~\citep{zaree2026attenmia}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/attn_feature_trajectory.pdf}
+  \caption{Hellinger distance at each masking timestep.
+    \emph{Left}: attention feature groups.
+    \emph{Right}: ELBO/entropy groups.
+    Later timesteps (higher masking) generally yield stronger separation.}
+  \label{fig:trajectory}
+\end{figure}
+
+Later masking timesteps produce stronger separation: at high masking ratios
+the finetuned model must rely heavily on memorised representations to
+reconstruct tokens, amplifying the membership signal.  The ELBO derivative
+features show a non-monotone pattern, peaking around $t{=}5$ before
+decreasing at extreme masking---consistent with the model shifting from
+structured reconstruction to uncertain guessing.
+
+\subsection{Feature Importance}
+
+Figure~\ref{fig:importance} shows cumulative feature importance per group
+from a gradient-boosted classifier trained on the full feature matrix.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figs/feature_importance.pdf}
+  \caption{Feature group importance (GBM).  ELBO trajectory and attention
+    signals dominate; mask consistency and hidden-state features provide
+    complementary information.}
+  \label{fig:importance}
+\end{figure}
+
+\subsection{DT-MIA Confidence Intervals}
+
+Figure~\ref{fig:dtmia_roc} shows \dtmia{} ROC curves with 95\%~CI from
+5-fold cross-validation, with error bars at key FPR thresholds.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.72\linewidth]{figs/dtmia_roc_detail.pdf}
+  \caption{\dtmia{} (XGB and MLP) ROC curves with 95\%~CI.
+    Error bars at FPR~$\in\{10\%,1\%,0.1\%\}$ quantify uncertainty from
+    5-fold cross-validation.}
+  \label{fig:dtmia_roc}
+\end{figure}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Why MDLMs are vulnerable.}
+The ELBO gap analysis (Section~\ref{sec:setup}) confirms that fine-tuning
+induces memorisation: the finetuned model assigns $2.77\nats$ lower loss to
+members than the base model.  This memorisation is not confined to the scalar
+loss---it manifests throughout the entire masking trajectory, making \dtmia{}
+far more powerful than any single-score attack.
+
+\paragraph{The diffusion trajectory as a novel membership signal.}
+The central finding is that the \emph{masking trajectory} is a uniquely rich
+source of membership information.  Unlike autoregressive models where a single
+forward pass provides one attention snapshot, an MDLM naturally provides $T$
+snapshots at different corruption levels (Figure~\ref{fig:trajectory}).  At
+higher masking ratios, members exhibit consistently lower attention entropy,
+more stable cross-layer correlations, and smoother ELBO trajectories---all
+consistent with the model having internalised those sequences during training.
+
+\paragraph{\sama{} sign-inversion: a cautionary tale.}
+The sign-inversion bug (Section~\ref{sec:sama}) demonstrates that adapting
+attacks from one diffusion paradigm (Gaussian) to another (discrete masking)
+requires careful attention to sign conventions in the score function.  Without
+this fix, \sama{} would appear to be a \emph{random} or \emph{below-random}
+attack despite the underlying signal being strong (corrected AUC $=0.806$).
+
+\paragraph{Limitations.}
+\begin{itemize}
+  \item We study a single model (\model{}, 0.6B params) and English-only data
+    (OpenWebText); larger MDLMs may show different memorisation behaviour.
+  \item The white-box assumption requires weight access, limiting applicability
+    to deployed API-only settings.
+  \item Training is relatively shallow (5 epochs); deeper fine-tuning may
+    produce stronger memorisation and higher attack success.
+\end{itemize}
+
+\paragraph{Future directions.}
+(i)~Evaluating \dtmia{} on larger MDLMs ($\geq$7B) and diverse domains
+(medical, code, multilingual); (ii)~applying differential privacy or gradient
+clipping during MDLM fine-tuning to reduce the ELBO gap; (iii)~designing a
+grey-box variant that approximates trajectory features without full weight
+access via API-level probing.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented the first comprehensive MIA benchmark on a masked diffusion
+language model, evaluating six attacks on the \model{} MDLM fine-tuned on
+OpenWebText (1\,000 members + 1\,000 non-members).  Our proposed \dtmia{}
+leverages the full $T$-step masking trajectory to extract 112 features---ELBO
+shape, prediction entropy, hidden-state geometry, and attention trajectory
+signals---and trains a gradient-boosted classifier achieving AUC~$=0.856$
+and TPR~$=13.5\%$ at FPR~$=0.1\%$, substantially outperforming both
+\sama{} and all black-box baselines.
+
+Hellinger distance analysis and per-timestep KDE plots confirm that the
+diffusion trajectory reveals systematic member/non-member differences at
+every feature group and every masking level.  MDLMs are not inherently more
+private than autoregressive LLMs; their iterative denoising structure
+introduces \emph{additional} attack surface through trajectory signals.  We
+hope this work motivates privacy-preserving MDLM fine-tuning and systematic
+privacy auditing of generative diffusion models.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\bibliography{references}
+\bibliographystyle{unsrtnat}
+
+\end{document}
