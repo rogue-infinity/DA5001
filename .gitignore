@@ -1,50 +1,125 @@
+# ══════════════════════════════════════════════════════════════════
+# DA5001 — Privacy in AI  |  .gitignore
+# Keep : *.py, *.sh, *.tex, *.bib, *.sty, requirements*.txt, *.md
+#        + compiled report PDFs
+# Exclude: weights, tensors, datasets, plots, logs, caches
+# ══════════════════════════════════════════════════════════════════
+
+# ── OS ────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# ── Virtual environments ──────────────────────────────────────────
 venv3.11/
 venv3.14/
-.DS_Store
+venv*/
+.venv/
+env/
 
-# Python cache
+# ── Python cache ──────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+dist/
+build/
 
-# Model weights & checkpoints
+# ── PyTorch / NumPy tensors & model weights ───────────────────────
 *.pt
 *.pth
 *.ckpt
-*.bin
 *.safetensors
+*.bin
+*.npz
+*.npy
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# ── Model & checkpoint directories ───────────────────────────────
+models/
+models_backup/
 checkpoints/
 bundles/
 
-# Datasets & data
+# ── Datasets / raw data ───────────────────────────────────────────
 data/
 datasets/
-*.csv
-*.tsv
 *.parquet
 *.h5
 *.hdf5
 *.arrow
 *.jsonl.gz
+*.csv
+*.tsv
+!requirements*.txt
 
-# Jupyter
+# ── HW-specific data ──────────────────────────────────────────────
+HW_3/data/
+
+# ── Generated plots & figures ─────────────────────────────────────
+**/plots/
+**/figs/
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.eps
+# Keep compiled report PDFs (not plot PDFs inside plots/figs dirs)
+!Project/Midterm_Report/Midterm_Report.pdf
+!Project/*/Logs/*/report.pdf
+
+# ── Experiment logs ───────────────────────────────────────────────
+# Note: avoid **/logs/ — case-insensitive macOS FS would match Logs/
+# Instead, exclude raw log files by extension and wandb run dirs
+*.log
+*.out
+*.err
+# Exclude the inner experiment log directories specifically
+**/logs/logs/
+
+# ── Weights & Biases ─────────────────────────────────────────────
+wandb/
+mlruns/
+
+# ── Result tensors and wandb exports ─────────────────────────────
+**/wandb_export/
+**/results/
+!**/results/*.py
+
+# ── LaTeX build artifacts (keep source & compiled output) ─────────
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
+*.nav
+*.snm
+*.vrb
+*.lof
+*.lot
+!*.tex
+!*.bib
+!*.sty
+
+# ── dllm subpackage (has own .git) ───────────────────────────────
+**/code/dllm/
+
+# ── Jupyter / IPython ─────────────────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb
 
-# HW3 MNIST raw data
-HW_3/data/
-
-# Weights & Biases run directories (keep wandb_export/ JSON)
-wandb/
-
-# Fine-tuned model checkpoints (large, reproducible)
-models/
-
-# dllm subpackage (has its own .git — install via pip install -e dllm/)
-**/code/dllm/
-
-# Remote run artefacts — raw tensors already covered by *.pt above
-# Stage logs and wandb_export are kept (they are the results)
+# ── Claude / IDE ──────────────────────────────────────────────────
+.claude/
+.idea/
+.vscode/
+*.swp
+*~
 
 

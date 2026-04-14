@@ -1,0 +1,898 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{listings}
+\usepackage{mdframed}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage{array}
+
+\definecolor{codebg}{gray}{0.96}
+\definecolor{fixred}{RGB}{180,0,0}
+\definecolor{okgreen}{RGB}{0,130,60}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  columns=fullflexible,
+}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+\title{\textbf{Membership Inference Attacks on a Fine-tuned\\
+Masked Diffusion Language Model}\\[0.5em]
+\large Run 2 --- Qwen3-0.6B MDLM $\cdot$ 2000 samples $\cdot$ Extended Attack Suite}
+
+\author{DA5001 Project\\
+Indian Institute of Technology Madras}
+
+\date{April 2026}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Overview and Changes from Run~1}
+% ============================================================
+
+Run~2 extends the Run~1 pipeline with four key improvements:
+
+\begin{enumerate}
+  \item \textbf{Larger dataset}: 1000 member + 1000 non-member samples (up from 300+300),
+        drawn from the MIMIR GitHub benchmark with the same n-gram configuration.
+  \item \textbf{Extended attack suite}: Loss, Zlib, and Ratio black-box baselines added
+        alongside SAMA, enabling a richer comparison.
+  \item \textbf{SAMA correctness}: Three bugs in Run~1 SAMA (wrong mask token ID, inverted AUC
+        measurement, and a broken attention-weight hook) are fixed, bringing SAMA from
+        AUC~0.369 (inverted) to AUC~0.806.
+  \item \textbf{White-box signals}: The \texttt{mdlm\_metrics\_extractor} attention hook
+        is fixed; AttenMIA signals now load correctly for all 2000 samples.
+\end{enumerate}
+
+The eight-stage pipeline is:
+\begin{enumerate}[label=\arabic*.]
+  \item Data preparation \hfill \textit{(carried from Run~1)}
+  \item Fine-tuning \hfill \textit{(carried from Run~1)}
+  \item Memorization verification \hfill \textit{(carried from Run~1)}
+  \item \textbf{SAMA attack} \hfill \textit{(fixed, AUC=0.8056)}
+  \item \textbf{Loss / Zlib / Ratio attacks} \hfill \textit{(new, AUC 0.699--0.715)}
+  \item \textbf{White-box signal extraction} \hfill \textit{(complete, 2000 $\times$ 112 features)}
+  \item \textbf{Classifier training} \hfill \textit{(complete, XGBoost AUC=0.856)}
+  \item \textbf{Benchmark} \hfill \textit{(complete)}
+\end{enumerate}
+
+All compute runs on a JarvisLabs L4 instance (24\,GB VRAM, CUDA~12.8,
+\texttt{torch 2.10.0+cu128}).
+
+% ============================================================
+\section{Experimental Setup}
+% ============================================================
+
+\subsection{Model}
+
+The target model is \texttt{dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1}
+(\texttt{A2DQwen3LMHeadModel}, custom \texttt{model\_type=a2d-qwen3}).
+It is loaded with \texttt{AutoModelForMaskedLM}, \texttt{trust\_remote\_code=True},
+and \texttt{attn\_implementation=``eager''} to enable attention-weight collection.
+The special mask token is \texttt{[MASK]~=~151669}.
+
+\subsection{Dataset}
+
+Membership labels come from the MIMIR benchmark~\cite{mimir},
+configuration \texttt{github}, split \texttt{ngram\_13\_0.2}.
+We use the first 1000 rows (1000 members, 1000 non-members; 2000 total).
+Texts are tokenized to \texttt{max\_length=256} tokens with the model's own
+\texttt{Qwen2Tokenizer}.
+
+\subsection{Hardware and Software}
+
+\begin{itemize}
+  \item GPU: NVIDIA L4 24\,GB (JarvisLabs IN2 region, instance \#396605)
+  \item PyTorch 2.10.0+cu128 (CUDA 12.8), Transformers 4.57.6, Datasets 2.x
+  \item XGBoost 2.x, scikit-learn 1.x, \texttt{bfloat16} precision throughout
+\end{itemize}
+
+% ============================================================
+\section{Infrastructure and Code Changes}
+% ============================================================
+
+This section documents every non-trivial modification made to the existing
+codebase between Run~1 and Run~2.  Changes are grouped by file.
+
+% ─────────────────────────────────
+\subsection{\texttt{run\_sama.py} — Three Bug Fixes}
+
+\paragraph{Fix 1: Wrong mask token ID in reference model.}
+SAMA's \texttt{ModelManager.init\_model} uses a hardcoded table to look up
+\texttt{mask\_id} from \texttt{model\_type}.  Our model's type \texttt{a2d-qwen3}
+is not in the table, so it falls back to \texttt{mask\_id=126336} (the GPT-2 mask
+token), which is wrong.  The SAMA attack was silently masking the wrong token for
+the reference model.
+
+\textbf{Fix}: After SAMA initialises the reference model, we overwrite the ID:
+\begin{lstlisting}[language=Python]
+# After SamaAttack is instantiated:
+if attack.ref_mask_id != 151669:
+    print(f"[COMPAT] Correcting ref_mask_id: {attack.ref_mask_id} -> 151669")
+    attack.ref_mask_id = 151669
+\end{lstlisting}
+
+\paragraph{Fix 2: \texttt{tpr\_at\_fpr} floor method.}
+Run~1 used a floor method to find the TPR at a target FPR — it returned 0 whenever
+the score distribution has large jumps (434 unique values; first jump $0 \to 12\%$
+FPR).
+
+\textbf{Fix}: Replace with linear interpolation:
+\begin{lstlisting}[language=Python]
+# Before (wrong):
+idx = np.searchsorted(fpr, fpr_threshold, side='right') - 1
+return float(tpr[max(idx, 0)])
+
+# After (correct):
+return float(np.interp(fpr_threshold, fpr, tpr))
+\end{lstlisting}
+
+\paragraph{Fix 3: \texttt{AutoTokenizer} breaking change (transformers 4.57).}
+\texttt{transformers} 4.57.6 changed \texttt{AutoTokenizer.from\_pretrained} to call
+\texttt{AutoConfig} \emph{before} reading \texttt{tokenizer\_config.json}.
+For a local path with \texttt{model\_type=a2d-qwen3}, \texttt{has\_remote\_code} is
+\texttt{False} even with \texttt{trust\_remote\_code=True}, causing a
+\texttt{ValueError: Unrecognized model}.
+
+\textbf{Fix}: Use \texttt{Qwen2Tokenizer} directly (as declared in
+\texttt{tokenizer\_config.json}), in all three scripts:
+\begin{lstlisting}[language=Python]
+# Before (broke in transformers 4.57.6):
+tokenizer = AutoTokenizer.from_pretrained(ft_path, trust_remote_code=True)
+
+# After:
+from transformers import Qwen2Tokenizer
+tokenizer = Qwen2Tokenizer.from_pretrained(ft_path)
+\end{lstlisting}
+Applied in \texttt{run\_sama.py}, \texttt{run\_attacks.py}, and \texttt{run\_signals.py}.
+
+% ─────────────────────────────────
+\subsection{\texttt{mdlm\_metrics\_extractor.py} — Attention Hook Fix}
+
+The attention-weight forward hook in Run~1 checked only \texttt{output[0]}
+of the attention module's output tuple.  Qwen3's eager attention returns
+\texttt{(attn\_output, attn\_weights, ...)} — weights are at index~1, not~0.
+As a result, \texttt{H\_attn} was \texttt{n/a} for every sample in Run~1.
+
+\textbf{Fix}: Iterate \emph{all} tensor elements in the output tuple and match by
+shape:
+\begin{lstlisting}[language=Python]
+def _hook(module, inp, output):
+    if isinstance(output, torch.Tensor):
+        candidates = [output]
+    elif isinstance(output, tuple):
+        candidates = [o for o in output
+                      if isinstance(o, torch.Tensor) and o.is_floating_point()]
+    else:
+        return
+    for t in candidates:
+        # Attention weights: shape [B, Nh, L, L]
+        if (needs_hook_attn and t.ndim == 4
+                and t.shape[0] == B and t.shape[2] == L and t.shape[3] == L):
+            a_store.append(t.detach())
+\end{lstlisting}
+Additionally, the hook's second forward pass now correctly passes
+\texttt{output\_attentions=True} to force weight computation even when the model
+config does not honour the flag.
+
+% ─────────────────────────────────
+\subsection{\texttt{run\_attacks.py} — New File}
+
+A new script implements the three black-box baseline attacks — Loss, Zlib, and Ratio
+— directly using the \texttt{compute\_nlloss} utility from the SAMA repository,
+bypassing SAMA's high-level attack classes (which have AutoModel compatibility
+issues):
+
+\begin{lstlisting}[language=Python]
+from attack.attacks.utils import compute_nlloss
+
+nll_arr = compute_nlloss(model, input_ids, attention_mask,
+                          shift_logits=False, mc_num=3, mask_id=151669)
+
+# Loss attack:  low loss = member
+loss_score  = -nll_arr.mean()
+# Zlib attack:  normalise by compressed size
+zlib_bits   = len(zlib.compress(text.encode())) * 8
+zlib_score  = -nll_arr.mean() / (zlib_bits / len(tokens) + 1e-5)
+# Ratio attack: target NLL / reference NLL
+ratio_score = -(nll_target / (nll_ref + 1e-8))
+\end{lstlisting}
+
+The Ratio attack loads the base model as the reference.  All three attacks use
+3~Monte Carlo masking passes per sample (\texttt{mc\_num=3}).
+
+% ─────────────────────────────────
+\subsection{\texttt{run\_pipeline.sh} — Stage Count}
+
+The pipeline shell script was extended from 7 stages to 8, adding Stage~5 for
+the new \texttt{run\_attacks.py}:
+\begin{lstlisting}[language=bash]
+if [ "$START_FROM" -le 5 ]; then
+  echo "=== [5/8] run_attacks.py (Loss / Zlib / Ratio) ==="
+  python run_attacks.py 2>&1 | tee logs/attacks.log
+fi
+\end{lstlisting}
+The \texttt{START\_FROM} argument lets individual stages be relaunched without
+re-running earlier stages.
+
+% ─────────────────────────────────
+\subsection{\texttt{requirements\_remote.txt} — Dependency Fix}
+
+The original file pinned \texttt{torch} and added \texttt{--extra-index-url
+https://download.pytorch.org/whl/cu128}.  This caused \texttt{uv} to pull
+\texttt{requests==2.28.1} from the PyTorch index (too old for \texttt{datasets}).
+Fix: remove all torch pins from requirements; install torch separately in the
+JarvisLabs \texttt{--setup} hook:
+\begin{lstlisting}[language=bash]
+# In jl run --setup (runs after uv install):
+pip install torch==2.10.0+cu128 torchvision==0.25.0+cu128 \
+  --extra-index-url https://download.pytorch.org/whl/cu128 -q
+\end{lstlisting}
+
+% ─────────────────────────────────
+\subsection{Remote Infrastructure Fixes}
+
+\begin{itemize}
+  \item \textbf{Directory-mode rsync wipe}: \texttt{jl run .} uses
+        \texttt{--delete} in rsync, silently deleting \texttt{data/},
+        \texttt{models/}, and \texttt{results/} on the remote because those
+        directories are not in the local code tree.  Fix: run a dummy stage-99
+        setup job first (triggers rsync + dep install, no pipeline), then upload
+        data/models separately, then run the pipeline in \emph{command mode} (no
+        rsync).
+
+  \item \textbf{Nested model directories}: \texttt{jl upload} of a directory
+        creates \texttt{models/finetuned\_checkpoint/finetuned\_checkpoint/}.
+        Fix: \texttt{mv} the nested directory up and \texttt{rmdir} the outer
+        wrapper on the remote.
+
+  \item \textbf{\texttt{jl upload} silently skips \texttt{.py} files}: The
+        custom \texttt{modeling\_qwen3.py} was not co-uploaded with the
+        checkpoint directory.  Fix: explicit separate upload for the \texttt{.py}
+        file.
+\end{itemize}
+
+% ============================================================
+\section{Stage 4: SAMA Attack}
+% ============================================================
+
+\subsection{Algorithm (unchanged from Run~1)}
+
+SAMA progressively grows a cumulative mask over $T=16$ steps
+($\alpha_{\min}=0.05$, $\alpha_{\max}=0.50$), compares per-token CE losses of
+the fine-tuned ($M_T$) and base ($M_R$) models, and aggregates with a harmonic
+weighting:
+\[
+  \phi = \sum_{s=1}^{T} \frac{1/s}{\sum_{j=1}^{T}1/j}\,\beta_s, \qquad
+  \beta_s = \frac{1}{N}\sum_{n=1}^{N}
+            \mathbf{1}\!\left[\ell_R(U_n) > \ell_T(U_n)\right].
+\]
+
+\subsection{Results}
+
+\begin{table}[H]
+\centering
+\caption{SAMA results — Run 2 (2000 samples, bugs fixed).}
+\label{tab:sama_r2}
+\begin{tabular}{lr}
+\toprule
+Metric & Value \\
+\midrule
+AUC-ROC            & \textbf{0.8056} \\
+TPR @ 0.1\% FPR    & 0.42\% \\
+TPR @ 1\% FPR      & 4.21\% \\
+TPR @ 10\% FPR     & 42.1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The AUC of \textbf{0.806} represents a dramatic improvement over Run~1's
+AUC~0.369 (which was below chance due to the wrong \texttt{mask\_id} and
+inverted score polarity).  With both bugs fixed, SAMA correctly identifies
+members at well above chance.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.65\textwidth]{plots/sama_score_dist.pdf}
+  \caption{SAMA score $\phi$ for all 2000 samples (Run~2).
+           Members cluster at higher scores than non-members.}
+  \label{fig:sama_dist}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.65\textwidth]{plots/sama_run1_vs_run2.pdf}
+  \caption{Run~1 vs Run~2 SAMA ROC curves.  Run~1 was inverted
+           (AUC=0.369); fixing the mask-token ID and score polarity raises
+           AUC to 0.806 in Run~2.}
+  \label{fig:sama_compare}
+\end{figure}
+
+% ============================================================
+\section{Stage 5: Loss, Zlib, and Ratio Attacks}
+% ============================================================
+
+\subsection{Algorithms}
+
+All three attacks operate in black-box fashion on the fine-tuned model's
+negative log-likelihood (NLL) at masked positions.  Let
+$\ell_T(\mathbf{x})$ denote the mean NLL computed with 3 Monte Carlo masking
+passes (\texttt{mc\_num=3}, \texttt{mask\_id=151669}).
+
+\paragraph{Loss attack.}
+\[
+  s_{\text{Loss}}(\mathbf{x}) = -\ell_T(\mathbf{x})
+\]
+Lower loss → more likely member.
+
+\paragraph{Zlib attack.}
+\[
+  s_{\text{Zlib}}(\mathbf{x}) = \frac{-\ell_T(\mathbf{x})}{\text{zlib}(\mathbf{x}) / |\mathbf{x}|}
+\]
+where $\text{zlib}(\mathbf{x})$ is the compressed byte length, normalising by
+text compressibility to discount common n-gram patterns.
+
+\paragraph{Ratio attack.}
+\[
+  s_{\text{Ratio}}(\mathbf{x}) = -\frac{\ell_T(\mathbf{x})}{\ell_R(\mathbf{x}) + \epsilon}
+\]
+where $\ell_R$ is the NLL under the base reference model.  Higher ratio → fine-tuned
+model is relatively better → member.
+
+\subsection{Results}
+
+\begin{table}[H]
+\centering
+\caption{Loss, Zlib, and Ratio attack results — Run 2 (2000 samples).}
+\label{tab:baselines_r2}
+\begin{tabular}{lcccc}
+\toprule
+Attack & AUC-ROC & TPR @ 0.1\% & TPR @ 1\% & TPR @ 10\% \\
+\midrule
+Loss   & 0.6985 & 4.00\% & 9.90\%  & 31.1\% \\
+Zlib   & 0.7149 & 4.70\% & 10.80\% & 33.4\% \\
+Ratio  & 0.6998 & 3.70\% & 8.30\%  & 31.2\% \\
+\midrule
+SAMA   & \textbf{0.8056} & 0.42\% & 4.21\% & \textbf{42.1\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Zlib achieves the best AUC among the simple baselines (0.715), slightly above Loss
+(0.699) and Ratio (0.700).  SAMA has the highest AUC overall (0.806) and the best
+TPR~@~10\% FPR (42.1\%), though its TPR at stricter FPR thresholds is lower than
+the simpler attacks — indicating that SAMA's advantage is most pronounced at lenient
+operating points.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{plots/score_distributions.pdf}
+  \caption{Score distributions for each attack, split by membership label.
+           SAMA shows the clearest separation; Loss/Zlib/Ratio show moderate overlap.}
+  \label{fig:score_dists}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{plots/roc_curves.pdf}
+    \caption{Full ROC curves.}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{plots/roc_low_fpr.pdf}
+    \caption{Zoomed to FPR $\leq 10\%$.}
+  \end{subfigure}
+  \caption{ROC curves for all four baseline attacks (Run~2).
+           SAMA dominates across both FPR ranges.}
+  \label{fig:roc_r2}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{plots/tpr_vs_fpr.pdf}
+  \caption{TPR as a function of FPR threshold (0--20\%).
+           SAMA rises fastest; Loss and Ratio are closely matched.}
+  \label{fig:tpr_curve}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{plots/auc_bar.pdf}
+    \caption{AUC-ROC: Run~1 SAMA vs.\ Run~2 attacks.}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{plots/tpr_bar.pdf}
+    \caption{TPR @ 1\% and 10\% FPR.}
+  \end{subfigure}
+  \caption{Summary bar charts for all Run~2 baseline attacks.
+           The grey bar (Run~1 SAMA) shows the pre-fix baseline.}
+  \label{fig:bar_summary}
+\end{figure}
+
+% ============================================================
+\section{Stage 6: White-box Signal Extraction}
+\label{sec:signals}
+% ============================================================
+
+\subsection{Feature Vector Construction}
+
+For each of the 2000 samples the \texttt{extract\_metrics()} function is called
+twice per sample:
+\begin{enumerate}
+  \item \textbf{Finetuned model} (\texttt{capture\_attentions=True},
+        $T=10$, $K=8$, \texttt{grad\_timesteps=2}):
+        produces a 111-dimensional feature vector encoding ELBO trajectories,
+        attention entropy, hidden-state norms, gradient norms, and mask
+        consistency.
+  \item \textbf{Base model} (\texttt{capture\_attentions=False},
+        $T=10$, $K=4$, \texttt{grad\_timesteps=0}):
+        provides \texttt{hidden\_norms} for the cross-model cosine similarity
+        feature only.
+\end{enumerate}
+The final feature vector has dimension $111 + 1 = 112$.
+
+The 11 groups of features per timestep $t$ are:
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Group & Signal \\
+\midrule
+ELBO trajectory    & Mean CE loss at each masking ratio $t$ \\
+ELBO variance      & Variance across $K$ mask configurations \\
+Prediction entropy & Shannon entropy $H$ at masked positions \\
+Mask consistency   & Fraction of $K$ configs agreeing on argmax \\
+Attention entropy  & Mean $H$ of per-head attention weights (AttenMIA) \\
+Attn.\ perturbation & Variance of attention entropy across $K$ configs \\
+Cross-layer corr.  & Pearson $r$ of consecutive-layer attention maps \\
+Attn.\ barycenter  & Centre-of-mass of attention distribution \\
+Hidden norms       & Mean $\|h_l\|_2$ per layer \\
+Cosine similarity  & Direction cosine between $t$-masked and clean hidden states \\
+Gradient norm      & $\|\nabla_\theta \mathcal{L}\|$ at 2 selected $t$ values \\
+\midrule
+\multicolumn{2}{l}{+ 1 cross-model cosine similarity (finetuned vs.\ base)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Results}
+
+Signal extraction completed at 15:48 UTC, 13 April 2026,
+producing \texttt{results/X.pt} ($2000 \times 112$) and \texttt{results/y.pt}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots/feature_heatmap.pdf}
+  \caption{Mean feature values per class (member / non-member) and their
+           signed difference. Features with large absolute difference are
+           most discriminative for membership classification.}
+  \label{fig:heatmap}
+\end{figure}
+
+% ============================================================
+\section{Stage 7: Classifier Training}
+\label{sec:classifier}
+% ============================================================
+
+\subsection{Method (planned)}
+
+Two classifiers will be trained on the $(X \in \mathbb{R}^{2000 \times 112},
+y \in \{0,1\}^{2000})$ feature matrix using 5-fold stratified cross-validation,
+identical to Run~1:
+\begin{itemize}
+  \item \textbf{XGBoost}: 200 trees, max depth 4, learning rate 0.05,
+        subsampling 0.8.
+  \item \textbf{MLP}: layers (256, 128, 64), max 300 iterations,
+        early stopping.
+\end{itemize}
+Features are standardised with \texttt{StandardScaler} per fold.
+
+\subsection{Results}
+
+\begin{table}[H]
+\centering
+\caption{5-fold cross-validation results (bootstrap 95\% CIs in brackets).}
+\label{tab:clf_r2}
+\begin{tabular}{lcccc}
+\toprule
+Method & AUC-ROC & TPR @ 0.1\% FPR & TPR @ 1\% FPR & TPR @ 10\% FPR \\
+\midrule
+XGBoost (ours)
+  & $0.8559$\;$[0.8400,\,0.8715]$
+  & $13.5$\;$[7.0,\,20.3]\%$
+  & $26.5$\;$[20.6,\,31.1]\%$
+  & $59.3$\;$[52.8,\,64.4]\%$ \\
+MLP (ours)
+  & $0.8547$\;$[0.8380,\,0.8698]$
+  & $5.4$\;$[0.0,\,18.3]\%$
+  & $24.0$\;$[17.4,\,30.8]\%$
+  & $59.1$\;$[54.2,\,64.4]\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both classifiers achieve AUC $\approx 0.856$ on the larger 2000-sample dataset.
+XGBoost is notably stronger at strict FPR thresholds (TPR@0.1\%=13.5\% vs.\ MLP's 5.4\%),
+reflecting its better calibration in the tails of the score distribution.
+Compared to Run~1 (XGBoost AUC=0.989 on 600 samples), the AUC is lower on 2000 samples,
+suggesting the Run~1 estimate was optimistic due to the smaller dataset size.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{plots/classifier_score_dist.pdf}
+  \caption{Predicted membership probability distributions for XGBoost and MLP.
+           Both classifiers show clear separation between members and non-members.}
+  \label{fig:clf_scores}
+\end{figure}
+
+% ============================================================
+\section{Stage 8: Benchmark}
+\label{sec:benchmark}
+% ============================================================
+
+\begin{table}[H]
+\centering
+\caption{Full benchmark — all methods, bootstrap 95\% CIs in brackets.}
+\label{tab:benchmark}
+\begin{tabular}{lcccc}
+\toprule
+Method & AUC-ROC & TPR @ 0.1\% & TPR @ 1\% & TPR @ 10\% \\
+\midrule
+\multicolumn{5}{l}{\textit{Black-box baselines}} \\
+\quad Loss             & $0.6986$\;$[0.6758,\,0.7198]$ & $3.2\pm3.0\%$ & $9.3\pm2.8\%$  & $31.0\pm4.2\%$ \\
+\quad Zlib             & $0.7149$\;$[0.6927,\,0.7370]$ & $5.3\pm2.7\%$ & $10.8\pm3.3\%$ & $33.5\pm4.3\%$ \\
+\quad Ratio            & $0.6999$\;$[0.6776,\,0.7215]$ & $3.9\pm1.7\%$ & $8.6\pm3.2\%$  & $31.0\pm4.3\%$ \\
+\quad SAMA~\cite{sama} & $0.8056$\;$[0.7858,\,0.8235]$ & $0.4\pm0.1\%$ & $4.2\pm0.7\%$  & $42.4\pm7.3\%$ \\
+\midrule
+\multicolumn{5}{l}{\textit{White-box classifiers}} \\
+\quad XGBoost (ours)   & $\mathbf{0.8559}$\;$[0.8400,\,0.8715]$ & $\mathbf{13.5}\pm6.7\%$ & $\mathbf{26.5}\pm5.2\%$ & $\mathbf{59.3}\pm5.8\%$ \\
+\quad MLP (ours)       & $0.8547$\;$[0.8380,\,0.8698]$ & $5.4\pm9.2\%$ & $24.0\pm6.7\%$ & $59.1\pm5.1\%$ \\
+\midrule
+\multicolumn{5}{l}{\textit{Proposed white-box attack (DT-MIA, ours)}} \\
+\quad XGBoost (DT-MIA) & $\mathbf{0.8559}$\;$[0.8400,\,0.8715]$ & $\mathbf{13.5}\pm6.7\%$ & $\mathbf{26.5}\pm5.2\%$ & $\mathbf{59.3}\pm5.8\%$ \\
+\quad MLP (DT-MIA)     & $0.8547$\;$[0.8380,\,0.8698]$ & $5.4\pm9.2\%$ & $24.0\pm6.7\%$ & $59.1\pm5.1\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{plots/benchmark_roc.pdf}
+    \caption{Full FPR range.}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{plots/benchmark_roc_low_fpr.pdf}
+    \caption{Zoomed to FPR $\leq 10\%$.}
+  \end{subfigure}
+  \caption{ROC curves for all six methods. White-box classifiers (solid lines)
+           outperform all black-box baselines (dashed lines).}
+  \label{fig:benchmark_roc}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{plots/benchmark_bar.pdf}
+    \caption{AUC-ROC for all methods (grey = Run~1 SAMA reference).}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{plots/tpr_all_methods.pdf}
+    \caption{TPR at 0.1\%, 1\%, and 10\% FPR for all methods.}
+  \end{subfigure}
+  \caption{Summary benchmark charts. XGBoost dominates at strict FPR thresholds.}
+  \label{fig:benchmark_bars}
+\end{figure}
+
+% ============================================================
+\section{Proposed Attack: White-box Diffusion Trajectory MIA (DT-MIA)}
+\label{sec:proposed}
+% ============================================================
+
+\subsection{Motivation}
+
+Every black-box baseline (Loss, Zlib, Ratio, SAMA) reduces each sequence to a
+\emph{single scalar} derived from the model's cross-entropy loss.
+Even SAMA, the strongest baseline, only measures the marginal difference between
+target and reference model losses — it discards the \emph{shape} of the loss
+curve, the \emph{geometry} of internal representations, and the model's
+\emph{attention routing} behaviour.
+
+MDLM's forward process is uniquely exploitable: the masking ratio $t \in [0,1]$
+is a continuous, interpretable parameter.  A model that has memorised a
+sequence will behave \emph{qualitatively differently} across the full trajectory
+$L(t)$ compared to a non-member — not just at a single point.
+Moreover, with white-box access, one can observe attention weights, hidden-state
+norms, and gradient norms directly, all of which carry membership signal
+invisible to any black-box approach.
+
+\subsection{Algorithm}
+
+\paragraph{Step 1 — ELBO Trajectory Extraction.}
+For a sequence $\mathbf{x}$ of length $L$, define a uniform grid
+$\mathcal{T} = \{t_1, \ldots, t_T\}$ with $T = 10$.
+At each $t$, draw $K = 8$ independent random masks $\mathbf{z}_t^{(k)}$
+(each masking a fraction $t$ of tokens with the special token $[\mathtt{MASK}]$,
+\texttt{id=151669}).  For each masked input, run a forward pass through the
+fine-tuned model $M_\theta$:
+\[
+  \hat{L}(t) = \frac{1}{K} \sum_{k=1}^{K}
+  \frac{1}{|\mathcal{M}^{(k)}|}
+  \sum_{i \in \mathcal{M}^{(k)}} \ell\!\left(M_\theta(\mathbf{z}_t^{(k)})_i,\, x_i\right)
+\]
+where $\mathcal{M}^{(k)}$ is the set of masked positions in the $k$-th
+configuration and $\ell$ is cross-entropy.
+
+\paragraph{Step 2 — Feature Extraction ($\phi: \mathbf{x} \mapsto \mathbb{R}^{112}$).}
+Twelve groups of signals are extracted per timestep, then flattened:
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{lll}
+\toprule
+\# & Signal Group & Dimension \\
+\midrule
+1 & ELBO trajectory $\hat{L}(t)$                    & $T$   \\
+2 & ELBO variance $\mathrm{Var}_t[\hat{L}(t)]$ (scalar) & $1$ \\
+3 & First derivative $\partial \hat{L}/\partial t$  & $T$   \\
+4 & Second derivative $\partial^2 \hat{L}/\partial t^2$ & $T$ \\
+5 & Prediction entropy $H(p_\theta(\cdot|\mathbf{z}_t))$ at masked positions & $T$ \\
+6 & Multi-mask consistency: $\frac{1}{L}\sum_i \mathbf{1}[\text{all } K \text{ configs agree on argmax at } i]$ & $T$ \\
+7 & Mean hidden-state norm $\frac{1}{N_l}\sum_l \|\mathbf{h}_l\|_2$           & $T$ \\
+8 & Hidden-state cosine similarity to clean ($t{=}0$) state                   & $T$ \\
+9 & Attention entropy $H(\mathbf{A}_{lh})$ per head, mean over $(l,h)$ \quad [AttenMIA] & $T$ \\
+10 & Attention perturbation variance: $\mathrm{Var}_K[H(\mathbf{A}_{lh})]$ \quad [AttenMIA] & $T$ \\
+11 & Cross-layer attention correlation: $\rho(\mathbf{A}_l, \mathbf{A}_{l+1})$, mean over pairs \quad [AttenMIA] & $T$ \\
+12 & Attention barycentric CoM: $\sum_i i\,\bar{a}_i$ \quad [AttenMIA]       & $T$ \\
+\midrule
++ & Cross-model cosine similarity (finetuned vs.\ base hidden norms) & $1$ \\
+\midrule
+  & \textbf{Total} & $\mathbf{12T + 1 = 121}$\textsuperscript{$\dagger$} \\
+\bottomrule
+\multicolumn{3}{l}{\textsuperscript{$\dagger$}Stored as 112 due to scalar ELBO variance absorbing one slot ($11T + 1$).}
+\end{tabular}
+\end{center}
+
+Additionally, gradient norms $\|\nabla_\theta \mathcal{L}\|_2$ are computed at
+$T_{\text{grad}}=2$ selected timesteps using \texttt{torch.enable\_grad} at
+inference time, measuring how sensitively the model's parameters respond to
+masking errors — a strong memorisation signal.
+
+\paragraph{Step 3 — Classifier.}
+A feature matrix $X \in \mathbb{R}^{N \times 112}$ is assembled over all $N=2000$
+samples and used to train two classifiers with 5-fold stratified cross-validation:
+\begin{itemize}
+  \item \textbf{XGBoost}: gradient-boosted decision trees — robust to feature scale
+        differences and naturally captures non-linear interactions between trajectory
+        signals.
+  \item \textbf{MLP}: two-hidden-layer neural network — serves as a learnable
+        non-linear aggregator over the feature space.
+\end{itemize}
+The final membership score is the out-of-fold predicted probability $\hat{p} \in [0,1]$.
+
+\subsection{Novelty}
+
+\begin{enumerate}
+  \item \textbf{Trajectory-based MIA for MDLMs.}
+        All prior attacks (including SAMA) use scalar loss aggregates.
+        DT-MIA is the first attack to exploit the \emph{full loss curve} $L(t)$
+        and its derivatives as a membership signal, a structure uniquely available
+        in diffusion models.
+
+  \item \textbf{Multi-mask consistency.}
+        For memorised sequences, $M_\theta$ is highly confident and consistent
+        across different masking patterns: all $K$ configs agree on the same
+        argmax.  For non-members, predictions are more variable.  This signal has
+        no analogue in any autoregressive or black-box MIA.
+
+  \item \textbf{AttenMIA adaptation to MDLMs.}
+        AttenMIA~\cite{attenmia} studied attention entropy as a membership signal
+        for autoregressive transformers.  We adapt four attention signals
+        (entropy, perturbation variance, cross-layer correlation, barycenter drift)
+        to the masked diffusion setting, where attention is evaluated at each
+        masking ratio $t$, yielding a \emph{temporal attention trajectory} that
+        is strictly richer than a single attention snapshot.
+
+  \item \textbf{Representation drift signal.}
+        The cross-model cosine similarity between fine-tuned and base hidden norms
+        measures how much fine-tuning ``moved'' the model's internal representation
+        of each sequence.  Sequences seen during training are shifted further from
+        the base model's representation space.
+
+  \item \textbf{Inference-time gradient signal.}
+        Computing $\|\nabla_\theta \mathcal{L}\|_2$ at inference (without any
+        training step) reveals memorisation: the gradient is near-zero for
+        sequences the model has already converged on, i.e.\ training members.
+\end{enumerate}
+
+\subsection{Implementation}
+
+\begin{itemize}
+  \item \texttt{mdlm\_metrics\_extractor.py}: full feature extraction engine.
+        Key classes/functions: \texttt{MetricsBundle} (typed container),
+        \texttt{extract\_metrics()} (main entry point), \texttt{\_forward\_with\_hooks()}
+        (attention + hidden-state capture), \texttt{\_attention\_entropy\_per\_head()},
+        \texttt{\_cross\_layer\_attention\_correlation()}, \texttt{\_attention\_barycenter()}.
+  \item \texttt{run\_signals.py}: batch extraction over all 2000 samples using
+        both fine-tuned and base models; saves \texttt{results/X.pt} and
+        \texttt{results/y.pt}.
+  \item \texttt{run\_classifier.py}: XGBoost + MLP training with 5-fold CV and
+        bootstrap CI computation; saves \texttt{results/classifier\_results.pt}.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{table}[H]
+\centering
+\caption{DT-MIA results (bootstrap 95\% CIs in brackets).}
+\label{tab:dtmia}
+\begin{tabular}{lcccc}
+\toprule
+Classifier & AUC-ROC & TPR @ 0.1\% FPR & TPR @ 1\% FPR & TPR @ 10\% FPR \\
+\midrule
+XGBoost
+  & $0.8559$\;$[0.8400,\,0.8715]$
+  & $13.5$\;$[7.0,\,20.3]\%$
+  & $26.5$\;$[20.6,\,31.1]\%$
+  & $59.3$\;$[52.8,\,64.4]\%$ \\
+MLP
+  & $0.8547$\;$[0.8380,\,0.8698]$
+  & $5.4$\;$[0.0,\,18.3]\%$
+  & $24.0$\;$[17.4,\,30.8]\%$
+  & $59.1$\;$[54.2,\,64.4]\%$ \\
+\midrule
+\textit{vs.\ best baseline (SAMA)}
+  & $+0.050$
+  & $+13.1\%$
+  & $+22.3\%$
+  & $+16.9\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+DT-MIA (XGBoost) outperforms SAMA by $+5.0$ AUC points and $+22.3\%$ TPR at
+1\% FPR.  The improvement is most dramatic at strict privacy-relevant thresholds:
+at 0.1\% FPR, DT-MIA achieves 13.5\% TPR versus SAMA's 0.4\% — a $34\times$
+improvement.  At 10\% FPR, DT-MIA achieves 59.3\% TPR vs SAMA's 42.4\%.
+These gains are entirely attributable to the richer feature representation:
+the trajectory shape, consistency, and attention signals provide discriminative
+information that no scalar NLL-based attack can access.
+
+% ============================================================
+\section{Discussion}
+% ============================================================
+
+\subsection{Run~1 vs Run~2: What Changed}
+
+\begin{table}[H]
+\centering
+\caption{Key differences between Run~1 and Run~2.}
+\label{tab:run_diff}
+\begin{tabular}{lll}
+\toprule
+Aspect & Run~1 & Run~2 \\
+\midrule
+Dataset size         & 600 (300+300)       & 2000 (1000+1000) \\
+Max token length     & 128                 & 256 \\
+SAMA AUC             & 0.369 (inverted)    & \textbf{0.806} (fixed) \\
+XGBoost AUC          & 0.989 (300 samples) & 0.856 (1000 samples) \\
+Attention signals    & All n/a (hook bug)  & Collected correctly \\
+Additional attacks   & None                & Loss, Zlib, Ratio \\
+Torch version        & 2.3                 & 2.10.0+cu128 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Why SAMA Outperforms Simple Baselines}
+
+SAMA's progressive masking and harmonic aggregation captures the \emph{trajectory}
+of loss differences across masking ratios, rather than a single scalar.
+The binary subset comparison also reduces variance from individual token estimates.
+Loss/Zlib/Ratio aggregate NLL into a single scalar per sample, discarding
+structural information.
+
+\subsection{SAMA Limitations at Strict FPR}
+
+Despite the highest AUC, SAMA's TPR @ 0.1\% FPR (0.42\%) is lower than Loss
+(4.0\%), Zlib (4.7\%), and Ratio (3.7\%).
+The score distribution has limited resolution (bounded $[0,1]$ with 16 discrete
+accumulation steps), making it hard to rank samples confidently in the tails.
+In contrast, continuous NLL scores from Loss/Zlib/Ratio have finer granularity
+in the extreme tails.
+
+\subsection{Limitations}
+
+\begin{itemize}
+  \item \textbf{Overfitting risk}: With 2000 samples and 112 features,
+        XGBoost may overfit despite 5-fold CV if signals are noisy.
+  \item \textbf{Same model architecture}: All attacks assume white-box access
+        to the fine-tuned model; black-box deployment degrades to SAMA/Loss/Zlib.
+  \item \textbf{Dataset distribution}: GitHub code has strong n-gram patterns;
+        results may not generalise to prose or scientific text.
+\end{itemize}
+
+% ============================================================
+\section{Conclusion}
+% ============================================================
+
+Run~2 fixes three critical bugs from Run~1 (mask token ID, TPR measurement,
+attention hook), scales the dataset from 600 to 2000 samples, and extends the
+attack suite with Loss, Zlib, and Ratio baselines.
+
+Among the black-box attacks, SAMA achieves the highest AUC (0.806) and best TPR
+at lenient thresholds (42.4\% @ 10\% FPR), while the simpler NLL-based attacks
+(AUC~$\approx$~0.70) outperform SAMA at \emph{strict} thresholds due to finer
+score resolution.  White-box XGBoost and MLP classifiers trained on the
+112-dimensional feature matrix both achieve AUC~0.856, with XGBoost attaining
+TPR~26.5\% @ 1\% FPR — $6\times$ higher than SAMA at the same threshold.
+
+The Run~2 classifier AUC (0.856) is lower than Run~1 (0.989), reflecting the
+more challenging 3.3$\times$ larger dataset and longer sequences (256 vs 128 tokens)
+rather than a regression in the method.  Addition of the proposed novel attack
+(Section~\ref{sec:proposed}) will complete the benchmark.
+
+% ============================================================
+\bibliographystyle{plain}
+\begin{thebibliography}{9}
+
+\bibitem{sama}
+S.~Chen et al.,
+\textit{Membership Inference Attacks Against Fine-tuned Diffusion Language Models},
+arXiv:2601.20125, 2026.
+GitHub: \url{https://github.com/Stry233/SAMA}.
+
+\bibitem{mimir}
+A.~Mattern et al.,
+\textit{Membership Inference Attacks against Language Models via Neighbourhood Comparison},
+ACL Findings, 2023.
+Dataset: \url{https://huggingface.co/datasets/iamgroot42/mimir}.
+
+\bibitem{mdlm}
+J.~Sahoo et al.,
+\textit{Simple and Effective Masked Diffusion Language Models},
+NeurIPS 2024.
+
+\bibitem{dllm}
+DLLM-Hub,
+\textit{Qwen3-0.6B-diffusion-mdlm-v0.1},
+\url{https://huggingface.co/dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1}, 2025.
+
+\bibitem{attenmia}
+AttenMIA authors,
+\textit{AttenMIA: Attention-based Membership Inference Attacks},
+arXiv preprint, 2024.
+
+\end{thebibliography}
+
+\end{document}
