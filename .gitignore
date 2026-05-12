@@ -111,6 +111,23 @@ mlruns/
 # ── dllm subpackage (has own .git) ───────────────────────────────
 **/code/dllm/
 
+# ── SAMA repo clones (has own .git) ──────────────────────────────
+**/code/SAMA/
+Project/SAMA/
+
+# ── Standalone sub-repo (has its own .git) ───────────────────────
+Project/Project/Whitebox and Shadow Models dLLM Attacks/
+
+# ── Shadow model results ──────────────────────────────────────────
+**/shadow_results/
+**/finetuned_checkpoint/
+**/base_checkpoint/
+
+# ── Archives ─────────────────────────────────────────────────────
+*.zip
+*.tar.gz
+*.tgz
+
 # ── Jupyter / IPython ─────────────────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb
