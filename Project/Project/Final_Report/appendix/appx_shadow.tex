@@ -1,0 +1,60 @@
+\section{Shadow Model: Full Results (Run~4)}
+\label{app:shadow}
+
+\subsection{Experimental Details}
+
+Three shadow MDLMs ($K_s=3$) are fine-tuned on surrogate data from the
+\texttt{ngram\_13\_0.2} MIMIR split, which is disjoint from the \texttt{ngram\_13\_0.8}
+evaluation set. The surrogate pool covers all six domains and contains roughly
+5,695 member sequences total, with about 1,000 per shadow model.
+Non-member texts come from Wikipedia and Common Crawl subsets not used in evaluation.
+Each shadow model uses the same hyperparameters as the target: 5 epochs, AdamW $\eta=10^{-4}$,
+bfloat16.
+
+A single XGBoost classifier is trained on features pooled from all three shadow models
+and applied to the target domain without any retraining. No target-domain labels are used.
+
+\subsection{Full Condition $\times$ Domain Results}
+
+Table~\ref{tab:shadow} in the main text gives the complete AUC matrix.
+Figure~\ref{fig:shadow_heatmap} shows the same data as a heatmap.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.72\linewidth]{Plots/appx_shadow_heatmap}
+  \caption{Shadow-model AUC by condition and domain.
+           Condition~D (attention only) is near-random universally.
+           Conditions~B, C, E all sit above SAMA in most domains.}
+  \label{fig:shadow_heatmap}
+\end{figure}
+
+\subsection{Per-Group Transfer AUC}
+
+Figure~\ref{fig:group_transfer} shows the shadow transfer AUC when training on
+one feature group at a time, analogous to the solo AUC analysis in
+Appendix~\ref{app:ablation} but in the transfer setting.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.65\linewidth]{Plots/appx_group_transfer}
+  \caption{Per-group shadow transfer AUC (mean $\pm$ std across six domains).
+           ELBO trajectory is the only group that transfers above 0.70.
+           All attention groups sit near 0.50.}
+  \label{fig:group_transfer}
+\end{figure}
+
+\subsection{Discussion}
+
+\textbf{Why attention features do not transfer.}
+Attention heads in MDLMs specialise to local syntactic patterns of each domain:
+mathematical notation in arXiv, Python indentation in GitHub, informal
+pronouns in HackerNews. A classifier trained on these patterns in the shadow domain
+applies to the wrong pattern space in the target. ELBO trajectory, by contrast,
+depends mainly on the model's memorisation degree, which is set by the training
+recipe and generalises across text domains when the architecture is fixed.
+
+\textbf{ELBO+H as a minimal attack.}
+Condition~C (ELBO+H, 8 dimensions) achieves 0.843 mean AUC with roughly 6$\times$
+less extraction cost than the full 46-dim vector. For practical auditing this
+offers a strong accuracy-to-cost ratio: 0.843 AUC with no target labels,
+compared to SAMA's 0.816 AUC which does require black-box model access per sample.

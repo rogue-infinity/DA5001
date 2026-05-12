@@ -1,0 +1,126 @@
+\subsection{TPR at Low FPR}
+\label{sec:tpr}
+
+Figure~\ref{fig:tpr_bar} shows TPR at 0.1\% and 1\% FPR across all six domains.
+These are the operationally relevant thresholds: a real privacy auditor needs near-zero
+false-alarm rate while catching as many actual training samples as possible.
+
+At \textbf{1\% FPR}, XGBoost recovers 15--40\% of members depending on domain,
+compared to 3--10\% for SAMA. On Pile-CC, XGBoost identifies 37.7\% of members
+at this threshold; on HackerNews it reaches 40.1\%.
+The improvement over SAMA is 4--8$\times$ across domains.
+
+At \textbf{0.1\% FPR}, XGBoost still recovers 4--18\% of members.
+This threshold means one false alarm per 1,000 non-members tested.
+SAMA cannot operate reliably at this resolution with $N=128$ subsets,
+while the trajectory classifier does so without degradation.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.98\linewidth]{Plots/fig4_tpr_bar}
+  \caption{TPR at 0.1\% FPR (left) and 1\% FPR (right) by domain and method.
+           XGBoost and MLP substantially outperform SAMA and all black-box methods
+           at both thresholds. SAMA is absent from the 0.1\% panel because its
+           score distribution does not resolve at that resolution.}
+  \label{fig:tpr_bar}
+\end{figure}
+
+\subsection{AUC-ROC Overview}
+\label{sec:main_auc}
+
+Table~\ref{tab:main} and Figure~\ref{fig:auc_heatmap} give the aggregate picture.
+XGBoost achieves mean AUC \textbf{0.878} ($\pm$0.046) and MLP achieves
+\textbf{0.882}, both well above the SAMA grey-box baseline at 0.816 ($\pm$0.037).
+The +0.062 gap over SAMA comes from capturing the full shape of the ELBO curve
+rather than a scalar per-subset NLL comparison.
+Black-box attacks (Loss, Zlib, Ratio) cluster between 0.625 and 0.722
+and gain nothing from the diffusion structure.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.98\linewidth]{Plots/fig2_auc_heatmap}
+  \caption{AUC-ROC across six methods and six MIMIR domains.
+           XGBoost and MLP (bottom two rows) consistently reach the highest values.
+           SAMA (fourth row) sits between black-box and white-box attacks.}
+  \label{fig:auc_heatmap}
+\end{figure}
+
+\input{tables/tab_main}
+
+\subsection{Shadow-Model Transfer}
+\label{sec:shadow_results}
+
+\input{tables/tab_shadow}
+
+The shadow-model attack achieves results close to the white-box oracle
+across all six domains (Figure~\ref{fig:shadow}, Table~\ref{tab:shadow}).
+Oracle AUC averages 0.878; Shadow-46 (Condition~B) averages 0.858, a gap of
+only 0.020. More strikingly, at 1\% FPR the shadow attack recovers a mean of
+19.5\% of members with no target-domain labels, compared to the oracle's 27.4\%.
+The gap in absolute detection rate narrows in the domains where ELBO signal is
+strongest: on Pile-CC, Shadow-46 actually exceeds the oracle's TPR@1\%FPR
+(40.4\% vs.\ 37.7\%), an artefact of the cross-domain calibration.
+
+Reducing to just 8 ELBO+entropy dimensions (Condition~C) costs only 0.015 AUC
+and stays within 0.2 percentage points of Shadow-46 at 1\% FPR on average,
+while extracting features roughly 6$\times$ faster.
+Pruned-30 (Condition~E, no attention dims) closely matches Shadow-46 throughout.
+
+Condition~D (attention only) collapses to AUC 0.525 and TPR@1\%FPR of 1.6\%
+across domains -- essentially random. Attention patterns are domain-specific and
+carry no transferable membership signal. ELBO-based signals transfer;
+attention signals do not.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.98\linewidth]{Plots/fig6_shadow}
+  \caption{Shadow-model AUC by condition and domain. Dashed lines show the
+           domain-specific SAMA baseline. Oracle (A) and Shadow-46 (B) are within
+           0.020 of each other in every domain. Attn-only (D) falls to near-random.}
+  \label{fig:shadow}
+\end{figure}
+
+\subsection{Domain Analysis}
+\label{sec:domain}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.72\linewidth]{Plots/fig3_roc_aggregate}
+  \caption{Aggregate ROC curves (mean $\pm$ std across six domains).
+           XGBoost and MLP dominate across the full FPR range.}
+  \label{fig:roc_agg}
+\end{figure}
+
+Attack difficulty varies by domain (Figure~\ref{fig:roc_agg}).
+Pile-CC (AUC 0.930, TPR@1\%FPR 37.7\%) and HackerNews (0.928, 40.1\%) are
+most vulnerable: high lexical diversity means the fine-tuned model's
+reconstruction advantage concentrates on its training texts.
+Wikipedia and arXiv are intermediate.
+GitHub (AUC 0.801, TPR@1\%FPR 15.9\%) is hardest: source code is structurally
+regular, so member and non-member files produce similar ELBO values even though
+the raw member gap is the largest of all domains (2.75 nats).
+Per-domain ROC and PR curves are in Appendix~\ref{app:domain}.
+
+\subsection{Feature Ablation}
+\label{sec:ablation}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.98\linewidth]{Plots/fig5_ablation}
+  \caption{Left: mean LOSO AUC drop per feature group across six domains.
+           Right: mean solo AUC per group using only that group.
+           The ELBO trajectory dominates; all attention groups are near-zero.}
+  \label{fig:ablation}
+\end{figure}
+
+Figure~\ref{fig:ablation} shows the leave-one-signal-out (LOSO) analysis.
+Removing the ELBO trajectory group drops mean AUC by \textbf{0.130},
+exceeding the entire gap between XGBoost and SAMA.
+Predictive entropy is the next most useful group (LOSO drop 0.043).
+All four attention groups contribute less than 0.006 each.
+Used alone, the ELBO trajectory achieves solo AUC between 0.67 and 0.84
+across domains, approaching SAMA's performance without any subset enumeration.
+
+The shadow conditions reinforce this: ELBO+H (8 dims) reaches 0.843 AUC
+and 19.2\% TPR@1\%FPR, while attention-only collapses to 0.525 AUC and 1.6\% TPR.
+Full per-domain tables are in Appendix~\ref{app:ablation}.

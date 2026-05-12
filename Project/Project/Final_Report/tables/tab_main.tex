@@ -1,0 +1,35 @@
+\begin{table}[t]
+\centering
+\caption{AUC-ROC and TPR@1\%FPR across six MIMIR domains.
+         95\% bootstrap CIs shown for XGBoost only (1000 resamples).
+         \textbf{Bold}: best AUC per domain.
+         Black-box: Loss, Zlib, Ratio. Grey-box: SAMA. White-box (ours): XGBoost, MLP.}
+\label{tab:main}
+\small
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{l l cccccc}
+\toprule
+& & \multicolumn{6}{c}{\textbf{Domain (AUC-ROC)}} \\
+\cmidrule(lr){3-8}
+\textbf{Method} & \textbf{Type} & arXiv & GitHub & H-News & Pile-CC & PubMed & Wikipedia \\
+\midrule
+Loss    & black-box & 0.650 & 0.705 & 0.674 & 0.683 & 0.647 & 0.662 \\
+Zlib    & black-box & 0.646 & 0.722 & 0.677 & 0.708 & 0.643 & 0.674 \\
+Ratio   & black-box & 0.627 & 0.703 & 0.652 & 0.682 & 0.624 & 0.640 \\
+SAMA    & grey-box  & 0.783 & 0.795 & 0.833 & 0.885 & 0.777 & 0.823 \\
+\midrule
+XGBoost & ours & \textbf{0.877}{\tiny[.862,.891]} & 0.801{\tiny[.782,.819]} & \textbf{0.928}{\tiny[.916,.938]} & \textbf{0.930}{\tiny[.919,.941]} & \textbf{0.842}{\tiny[.824,.859]} & 0.892{\tiny[.879,.905]} \\
+MLP     & ours & 0.886 & \textbf{0.824} & 0.919 & 0.924 & 0.836 & \textbf{0.902} \\
+\midrule
+& & \multicolumn{6}{c}{\textbf{Domain (TPR @ 1\% FPR)}} \\
+\cmidrule(lr){3-8}
+& & arXiv & GitHub & H-News & Pile-CC & PubMed & Wikipedia \\
+\midrule
+Loss    & black-box & 3.9\% & 7.1\% & 4.2\% & 3.7\% & 3.5\% & 3.9\% \\
+Zlib    & black-box & 5.3\% & 7.9\% & 6.7\% & 8.3\% & 3.8\% & 5.3\% \\
+SAMA    & grey-box  & 3.4\% & 3.3\% & 4.5\% & 10.4\% & 3.3\% & 4.9\% \\
+XGBoost & ours & \textbf{26.9\%} & 15.9\% & \textbf{40.1\%} & \textbf{37.7\%} & \textbf{18.2\%} & 25.7\% \\
+MLP     & ours & 27.4\% & \textbf{20.1\%} & 28.6\% & 31.3\% & 16.2\% & \textbf{29.1\%} \\
+\bottomrule
+\end{tabular}
+\end{table}

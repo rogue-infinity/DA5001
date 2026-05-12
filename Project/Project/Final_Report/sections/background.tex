@@ -1,0 +1,54 @@
+\subsection{Masked Diffusion Language Models}
+
+An MDLM defines a forward process that masks each token of a clean sequence $x_0$
+independently with probability $t$, where $t \sim \mathcal{U}(\varepsilon, 1)$:
+\begin{equation}
+  q(x_t \mid x_0) = \prod_{i=1}^{L}
+    \bigl[ t \cdot \mathbf{1}[x_t^{(i)} = \texttt{[M]}]
+         + (1-t) \cdot \mathbf{1}[x_t^{(i)} = x_0^{(i)}] \bigr].
+\end{equation}
+The model $p_\theta$ learns to fill in the masked positions, trained by minimising
+\begin{equation}
+  \mathcal{L}_\theta(x_0) = \mathbb{E}_{t,\, x_t \sim q(\cdot\mid x_0)}
+    \!\left[ -\log p_\theta(x_0 \mid x_t)_{\mathrm{masked}} \right].
+  \label{eq:elbo}
+\end{equation}
+The model used throughout is \texttt{dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1},
+a 0.6B-parameter MDLM on the Qwen3 backbone trained under the MDLM
+framework~\citep{sahoo2024mdlm,qwen2025}.
+
+\subsection{Membership Inference Attacks}
+
+An MIA is a binary classifier that decides whether a text $x$ was in the training set,
+given some access to the model. Access level determines the attack category:
+
+\textit{Black-box} attacks use only scalar outputs.
+Loss~\citep{yeom2018privacy} thresholds on NLL directly.
+Zlib normalises NLL by compressed text length.
+Ratio divides the fine-tuned model's NLL by the base model's NLL.
+
+\textit{Grey-box} attacks use model NLL for arbitrary masked inputs but not internal states.
+SAMA~\citep{shi2025sama} falls here.
+
+\textit{White-box} attacks have full access to weights, hidden states, and attention maps.
+Our attack is white-box on the target model, but we also study a shadow-model
+variant that requires no target-domain labels.
+
+We evaluate on the MIMIR benchmark~\citep{duan2024mimir}, which provides
+membership-labelled samples across six text domains with a controlled
+n-gram split to prevent trivial lexical overlap.
+
+\subsection{SAMA Baseline}
+
+SAMA~\citep{shi2025sama} runs in two phases.
+Phase~I applies progressive cumulative masking over $T$ steps.
+At each step $s$ it draws $N$ random token subsets $\{U_n\}$ and computes
+$\beta_s = \frac{1}{N}\sum_n \mathbf{1}[\ell_R(U_n) > \ell_T(U_n)]$,
+where $\ell_R$ and $\ell_T$ are subset NLL from the base and fine-tuned models.
+Phase~II aggregates with harmonic weights:
+\begin{equation}
+  \phi(x) = \sum_{s=1}^{T} \frac{1/s}{\sum_{j=1}^{T} 1/j}\,\beta_s.
+\end{equation}
+We run SAMA with $T=4$, $N=128$, $M=10$ tokens per subset.
+It is designed for moderate memorisation; Section~\ref{sec:results} shows
+where it falls short compared to trajectory-based features.

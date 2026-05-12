@@ -1,0 +1,51 @@
+Large language models trained or fine-tuned on private data can memorise parts
+of that data~\citep{carlini2021extracting,shokri2017membership}.
+Membership inference attacks (MIA) try to detect this: given a text and some
+access to a model, can an attacker tell whether that text was in the training set?
+This is the standard empirical test for privacy leakage, and it matters practically
+whenever models are fine-tuned on sensitive corpora like medical records, legal
+documents, or private codebases~\citep{carlini2022membership}.
+
+Most MIA work targets autoregressive (AR) models, where a per-token log-probability
+is directly available and serves as a natural score~\citep{duan2024mimir,yeom2018privacy}.
+Masked Diffusion Language Models~\citep{austin2021d3pm,sahoo2024mdlm,nieLLaDA2025}
+work differently: they learn to reconstruct randomly masked tokens rather than
+predict the next one. There is no single unconditional likelihood to read off.
+Instead, the loss depends on which tokens are masked and at what ratio, and this
+dependency turns out to carry membership information that scalar-based attacks miss.
+
+We focus on the ELBO trajectory: how the masked reconstruction loss changes as
+the masking ratio $\alpha$ increases from 0.05 to 0.50.
+A model that has memorised a text reconstructs it cheaply at any masking level,
+producing a lower and more concave loss curve than for unseen text.
+Collecting these values at four masking levels and adding a few supporting signals
+(predictive entropy, hidden-state norms) gives a 46-dimensional feature vector
+that a gradient-boosted classifier can use to separate members from non-members.
+
+Prior work on MDLMs includes SAMA~\citep{shi2025sama}, a grey-box attack that
+aggregates NLL scores across random token subsets. Our white-box trajectory
+features beat it by +0.062 AUC on average. For autoregressive models,
+\citet{duan2024mimir} show that standard loss-based attacks largely fail on
+pretrained models but remain viable after fine-tuning.
+MIA for diffusion image models is studied in~\citet{dockhorn2022dpdm}.
+No prior work applies white-box trajectory extraction to discrete diffusion LMs.
+
+We make four contributions:
+
+(1) \textbf{White-box trajectory MIA.} We extract a 46-dim feature vector at four masking
+ratios and train XGBoost, LightGBM, and MLP classifiers via 5-fold CV.
+Mean AUC of 0.878 across six MIMIR domains, peaking at 0.930.
+
+(2) \textbf{Shadow-model transfer.} We train classifiers on $K=3$ shadow MDLMs
+fine-tuned on surrogate data from different domains, then apply them directly
+to the target domain with no retraining. This achieves 0.858 mean AUC with no
+target-domain labels, closing within 0.020 of the white-box oracle.
+Shadow transfer is a practical, near-equally effective attack path.
+
+(3) \textbf{Feature ablation.} A LOSO analysis across all six domains isolates
+the ELBO trajectory as the primary signal (mean drop 0.142 when removed).
+All four attention-based signal groups contribute less than 0.003 each.
+
+(4) \textbf{Attention features do not transfer.} When only attention features
+are used in the shadow-model setting, AUC drops to 0.525, confirming they are
+domain-specific and not reusable across domains. ELBO-based signals are.

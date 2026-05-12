@@ -1,0 +1,49 @@
+\section{Per-Domain ROC and PR Curves}
+\label{app:domain}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{Plots/appx_roc_grid}
+  \caption{Per-domain ROC curves for all five evaluated methods.
+           The random baseline diagonal is dotted. AUC values appear in the legend
+           of the arXiv panel; method colours are consistent across panels.}
+  \label{fig:roc_grid}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{Plots/appx_pr_grid}
+  \caption{Per-domain precision-recall curves. The horizontal dotted line is
+           the random classifier baseline (class balance = 0.5).}
+  \label{fig:pr_grid}
+\end{figure}
+
+\paragraph{Domain notes.}
+
+\textbf{arXiv.} XGBoost and MLP track closely above SAMA at all FPR thresholds.
+
+\textbf{GitHub.} SAMA (AUC 0.795) nearly matches XGBoost (0.801). This is the only domain
+where SAMA closes to within 0.01 of the white-box classifier, likely because source code
+has low perplexity and SAMA's NLL comparison works reasonably well.
+
+\textbf{HackerNews.} Largest raw gap: XGBoost 0.928 vs SAMA 0.833.
+Short, informal sentences with distinctive vocabulary produce particularly clean
+ELBO trajectories for member texts.
+
+\textbf{Pile-CC.} XGBoost achieves its highest TPR at 10\% FPR (0.803) here.
+SAMA also performs well (0.885) relative to other domains.
+
+\textbf{PubMed Central.} Highly formulaic biomedical text reduces the
+ELBO curvature difference between members and non-members.
+
+\textbf{Wikipedia.} MLP slightly outperforms XGBoost (0.902 vs 0.892).
+This is the only domain where MLP takes the top spot; encyclopedic text's
+consistent structure may favour the MLP's learned feature interactions.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.75\linewidth]{Plots/appx_feature_kde}
+  \caption{KDE of the four most discriminative features for arXiv.
+           ELBO values at low masking ratios show the clearest separation.}
+  \label{fig:kde}
+\end{figure}

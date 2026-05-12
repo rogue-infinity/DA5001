@@ -1,0 +1,24 @@
+\paragraph{Dataset.}
+We use the MIMIR benchmark~\citep{duan2024mimir}, \texttt{ngram\_13\_0.8} split,
+across six domains: arXiv, GitHub, HackerNews, Pile-CC, PubMed Central, and Wikipedia.
+This split enforces that members and non-members share at most 20\% of their unique
+13-grams, which prevents trivial lexical overlap from inflating scores.
+For each domain we use 300 members and 300 non-members as the classifier evaluation set,
+with 1{,}000 members used for fine-tuning. Texts are tokenised with Qwen2Tokenizer
+and truncated to 256 tokens.
+
+\paragraph{Fine-tuning.}
+We fine-tune \texttt{dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1} separately per domain
+using AdamW ($\eta = 10^{-4}$, weight decay 0.01), 5 epochs, batch size 8, bfloat16.
+Training runs on a single NVIDIA L4 GPU (24\,GB) and takes roughly 6--7 minutes per domain.
+We verify memorisation via the ELBO gap before running attacks (Section~\ref{sec:verification}).
+
+\paragraph{Baselines.}
+Black-box: Loss (fine-tuned NLL), Zlib (NLL / compressed length),
+Ratio (NLL$_\mathrm{FT}$ / NLL$_\mathrm{base}$).
+Grey-box: SAMA~\citep{shi2025sama} ($T=4$ steps, $N=128$ subsets, $M=10$ tokens).
+
+\paragraph{Metrics.}
+AUC-ROC with 95\% bootstrap CIs (1{,}000 resamples), and TPR at fixed FPR thresholds
+\{0.1\%, 1\%, 10\%\}. Low-FPR TPR is the practically relevant metric:
+a real auditor wants a small false-alarm rate while finding as many members as possible.

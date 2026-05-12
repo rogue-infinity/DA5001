@@ -1,0 +1,59 @@
+\section{Proof-of-Concept: Run~1 (Single-Domain Overfitting)}
+\label{app:poc}
+
+Before running the full six-domain pipeline we validated the attack framework
+on a single controlled experiment: intentionally overfit the MDLM on a small dataset
+and verify that white-box trajectory features can recover membership under extreme
+memorisation.
+
+\subsection*{Setup}
+
+We fine-tuned \texttt{Qwen3-0.6B-diffusion-mdlm-v0.1} on 300 GitHub member texts
+for \textbf{15 epochs} (AdamW, $\eta=10^{-4}$, batch 8, bfloat16).
+The intent was to push memorisation hard and stress-test the feature extraction pipeline
+before scaling to six domains.
+
+\subsection*{Memorisation Verification}
+
+The mean member ELBO gap reached \textbf{4.625 nats}: the fine-tuned model reconstructs
+training texts at almost no reconstruction cost at any masking level.
+The non-member gap was $-0.130$ nats (base and fine-tuned model are essentially equivalent
+on unseen text). Figure~\ref{fig:run1_elbo} shows the distribution.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.55\linewidth]{Plots/appx_run1_elbo}
+  \caption{ELBO gap distribution from Run~1 (GitHub, 15 epochs).
+           Member gap mean: 4.625 nats; non-member gap mean: $-$0.130 nats.
+           The two distributions are nearly fully separated.}
+  \label{fig:run1_elbo}
+\end{figure}
+
+\subsection*{Attack Results}
+
+\begin{center}
+\small
+\begin{tabular}{l cc}
+\toprule
+\textbf{Method} & \textbf{AUC} & \textbf{TPR@1\%FPR} \\
+\midrule
+XGBoost (ours) & \textbf{0.989} & \textbf{88.9\%} \\
+MLP (ours)     & 0.986          & 77.3\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Discussion}
+
+White-box trajectory features cleanly recover membership even under extreme overfitting.
+The ELBO curve is consistently lower and more concave for member texts regardless of
+how low the absolute reconstruction values get, so the classifier can separate the two
+populations even when the member gap is nearly 5 nats above zero.
+
+This experiment confirmed that the feature extraction pipeline is sound.
+It also showed that 15 epochs is too many for the main experiments: the model
+over-memorises in a way that collapses the discrimination into a trivial task
+and moves the operating point far outside the regime of practical deployments.
+The main experiments use 5 epochs (see Appendix~\ref{app:hyperparam}),
+which produces member ELBO gaps of 2.19--2.75 nats across domains and keeps
+the attack in a more realistic range.

@@ -1,0 +1,32 @@
+\begin{table}[t]
+\centering
+\caption{Leave-One-Signal-Out (LOSO) AUC drop per feature group across six domains.
+         Positive values indicate that removing the group hurts performance.
+         \textbf{Bold}: largest drop (most important).
+         Full AUC (all features) is 0.877--0.930 depending on domain (Table~\ref{tab:main}).}
+\label{tab:ablation}
+\small
+\begin{tabular}{l r rrrrrr r}
+\toprule
+\textbf{Feature Group} & \textbf{Dims} & arXiv & GitHub & H-News & Pile-CC & PubMed & Wiki & \textbf{Mean} \\
+\midrule
+\textbf{ELBO Trajectory} & 4 & \textbf{0.146} & \textbf{0.045} & \textbf{0.141} & \textbf{0.135} & \textbf{0.172} & \textbf{0.141} & \textbf{0.130} \\
+Pred.\ Entropy    & 4 & 0.042 & 0.014 & 0.041 & 0.035 & 0.064 & 0.060 & 0.043 \\
+Hidden Norms      & 4 & 0.003 & 0.016 & 0.001 & 0.002 & 0.002 & 0.010 & 0.006 \\
+Attn Cross-layer  & 4 & --    & 0.013 & 0.005 & 0.009 & 0.003 & 0.003 & 0.006 \\
+Cross-model Cos   & 1 & 0.001 & 0.001 & --    & --    & --    & 0.011 & 0.002 \\
+Mask Consistency  & 4 & --    & 0.011 & 0.001 & --    & --    & --    & 0.001 \\
+Attn Entropy      & 4 & --    & 0.004 & 0.003 & --    & --    & 0.001 & 0.001 \\
+ELBO Variance     & 1 & --    & 0.001 & --    & --    & --    & --    & $\approx$0 \\
+Attn Barycenter   & 4 & 0.001 & 0.003 & --    & --    & --    & --    & $\approx$0 \\
+$dL/dt$           & 4 & --    & --    & --    & --    & --    & 0.002 & $\approx$0 \\
+$d^2L/dt^2$       & 4 & --    & --    & --    & --    & --    & --    & $\approx$0 \\
+Attn Perturbation & 4 & --    & --    & --    & --    & --    & --    & $\approx$0 \\
+Hidden Cosine     & 4 & --    & --    & --    & --    & --    & --    & $\approx$0 \\
+\midrule
+\textit{Total}    & \textit{46} & & & & & & & \\
+\bottomrule
+\end{tabular}
+\vspace{1pt}
+{\footnotesize ``--'' denotes negligible or negative drop ($<0.001$), indicating the feature group is redundant or slightly harmful.}
+\end{table}

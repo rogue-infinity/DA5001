@@ -1,0 +1,45 @@
+\section{Full Feature Taxonomy (46 Dimensions)}
+\label{app:features}
+
+Table~\ref{tab:features} lists all 46 features in the order they appear in the
+feature vector $\phi(x)$.  Features are extracted at each of four masking ratios
+$\alpha_j \in \{0.05, 0.20, 0.35, 0.50\}$ unless otherwise noted (marked ``global'').
+The \emph{Expected direction} column indicates the sign of the difference
+$\phi_{\text{member}} - \phi_{\text{non-member}}$ predicted by the memorisation
+hypothesis; this is used as a sanity check but not enforced during training.
+
+\begin{table}[h]
+\centering
+\caption{Complete 46-dimensional feature vector description.
+         $K=8$ independent random masks are averaged per $(\text{feature}, \alpha_j)$ pair.}
+\label{tab:features}
+\small
+\begin{tabular}{r l l p{4.5cm} c}
+\toprule
+\textbf{Idx} & \textbf{Name} & \textbf{Group} & \textbf{Description} & \textbf{Direction} \\
+\midrule
+1--4   & \texttt{elbo\_t\{0-3\}\_a\{$\alpha$\}} & ELBO Traj.       & Masked NLL $\mathcal{L}(x;\alpha_j)$ at each ratio                     & member $<$ non-member \\
+5      & \texttt{elbo\_var}                       & ELBO Variance    & Variance of ELBO across $K$ masks at $\alpha_0=0.05$                    & member $<$ non-member \\
+6--9   & \texttt{dldt\_t\{0-3\}}                 & $dL/dt$          & Finite-difference $\partial\mathcal{L}/\partial\alpha$ at each ratio    & member $<$ non-member \\
+10--13 & \texttt{d2ldt2\_t\{0-3\}}               & $d^2L/dt^2$      & Second derivative estimate at each ratio                                 & member $>$ non-member \\
+14--17 & \texttt{pred\_entropy\_t\{0-3\}}         & Pred.\ Entropy   & Mean $H[\,p_\theta(\cdot|x_{\alpha_j})\,]$ at masked positions          & member $<$ non-member \\
+18--21 & \texttt{mask\_consistency\_t\{0-3\}}     & Mask Consist.    & Mean agreement of predictions under two independent masks                & member $>$ non-member \\
+22--25 & \texttt{hidden\_norms\_t\{0-3\}}         & Hidden Norms     & Mean $\|\mathbf{h}^{\ell}\|_2$ of final layer hidden state              & member $<$ non-member \\
+26--29 & \texttt{hidden\_cosine\_t\{0-3\}}        & Hidden Cosine    & Cosine sim.\ between FT and base hidden states at last layer            & member $>$ non-member \\
+30--33 & \texttt{attn\_entropy\_t\{0-3\}}         & Attn Entropy     & Mean entropy of attention weight distribution over heads                 & member $<$ non-member \\
+34--37 & \texttt{attn\_crosslayer\_t\{0-3\}}      & Attn Cross-layer & Pearson correlation of attention maps between consecutive layers          & member $>$ non-member \\
+38--41 & \texttt{attn\_barycenter\_t\{0-3\}}      & Attn Barycenter  & Wasserstein barycenter position of attention mass                        & domain-dependent \\
+42--45 & \texttt{attn\_perturbation\_t\{0-3\}}    & Attn Perturb.    & Change in attention entropy under small input token perturbation         & member $<$ non-member \\
+46     & \texttt{cross\_model\_cos}               & Cross-model Cos. & Cosine sim.\ of last-layer representation: FT vs.\ base (global)        & member $>$ non-member \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Notes.}
+Features in the ELBO Variance, $dL/dt$, and $d^2L/dt^2$ groups show near-zero
+LOSO drops (Table~\ref{tab:ablation}) despite representing distinct mathematical
+quantities.  This is because at $T=4$ masking levels, the finite-difference
+estimates of derivatives are nearly collinear with the raw ELBO trajectory values
+at those four points; removing either set leaves the other to compensate almost
+perfectly.  Extending to $T\geq8$ levels may break this collinearity and reveal
+independent signal in the derivative features.

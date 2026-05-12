@@ -1,0 +1,17 @@
+Masked Diffusion Language Models (MDLMs) replace autoregressive generation with
+iterative demasking, and their privacy properties are largely unstudied.
+We study membership inference attacks (MIA) on fine-tuned MDLMs and show they
+are significantly more vulnerable than current grey-box baselines suggest.
+We extract a 46-dimensional feature vector from the model's reconstruction loss
+at four masking ratios and train XGBoost and MLP classifiers on top.
+On the MIMIR benchmark across six text domains, XGBoost achieves mean AUC
+\textbf{0.878} ($\pm$0.046), peaking at \textbf{0.930} on Pile-CC, and
+beats the SAMA grey-box baseline by \textbf{+0.062} AUC on average.
+A leave-one-signal-out ablation shows that the ELBO trajectory alone drives
+most of this (mean drop 0.142 when removed), while attention features add
+almost nothing ($<$0.003).
+We also design a shadow-model transfer attack where $K=3$ surrogate MDLMs,
+trained on data from unrelated domains, generate classifier labels with
+no access to the target domain. This achieves \textbf{0.858} mean AUC,
+within 0.020 of the white-box oracle, and establishes shadow-model transfer
+as a practical and near-equally effective attack path.

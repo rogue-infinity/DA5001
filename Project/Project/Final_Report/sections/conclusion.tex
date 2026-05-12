@@ -1,0 +1,28 @@
+Fine-tuned MDLMs are significantly more vulnerable to membership inference than
+grey-box baselines suggest. Extracting a 46-dimensional diffusion-trajectory
+feature vector at four masking levels and training gradient-boosted classifiers
+on top achieves mean AUC 0.878 across six MIMIR domains, +0.062 over SAMA.
+The ELBO trajectory drives most of this: removing it alone drops AUC by 0.130,
+while all attention features together contribute less than 0.006.
+
+The shadow-model attack makes this threat practical. With $K=3$ surrogate MDLMs
+trained on data from different domains, we reach 0.858 mean AUC with no
+target-domain labels at all. The oracle-to-shadow gap of 0.020 is small enough
+to consider shadow transfer a viable standalone attack, not just an approximation.
+Reducing to 8 ELBO+entropy dimensions (Condition~C) costs only 0.015 more AUC
+and makes extraction roughly 6$\times$ faster, offering a good trade-off for
+resource-constrained auditing.
+
+\paragraph{Limitations.}
+All experiments use a single model family (Qwen3-0.6B MDLM) in a fine-tuned setting
+with small training sets (300--1,000 samples per domain). Behaviour on larger
+models or in the pretraining regime may differ. The white-box threat model is
+also optimistic; deployments that restrict internal access would limit the attack
+to the shadow-model path.
+
+\paragraph{Future directions.}
+On the defence side, differential privacy during fine-tuning~\citep{abadi2016dp}
+and explicit regularisation of the ELBO trajectory are natural candidates.
+On the attack side, extending to LLaDA and other MDLM variants, and estimating
+the ELBO trajectory from generation-time outputs for fully black-box settings,
+are open problems.

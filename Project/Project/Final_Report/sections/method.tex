@@ -1,0 +1,90 @@
+\subsection{Threat Model}
+\label{sec:threat}
+
+We consider two attack settings.
+The first is full white-box: the attacker has the fine-tuned model weights and
+can run forward passes with any masking pattern, reading hidden states, attention
+maps, and gradient tensors. This models a scenario where weights are published
+or leaked, which is realistic for models shared on public hubs.
+The second is shadow-model transfer: the attacker does not have the target model's
+membership labels, but does have the architecture and fine-tuning recipe, and can
+train surrogate models on unrelated data. Both settings are evaluated in
+Section~\ref{sec:results}.
+
+\subsection{Memorisation Verification}
+\label{sec:verification}
+
+Before running attacks we check that fine-tuning has actually induced memorisation.
+We compute the ELBO gap:
+\begin{equation}
+  \Delta_{\mathrm{mem}}(x) = \mathcal{L}_{\mathrm{base}}(x) - \mathcal{L}_{\mathrm{FT}}(x),
+\end{equation}
+where $\mathcal{L}_{\mathrm{base}}$ is the base model ELBO and $\mathcal{L}_{\mathrm{FT}}$
+is the fine-tuned model ELBO on the same text.
+A positive gap means fine-tuning lowered the reconstruction cost for that text.
+Across our six domains, member gaps run from 2.19 to 2.75 nats and
+non-member gaps from 1.39 to 2.12 nats (Figure~\ref{fig:elbo_gap}).
+The separation confirms memorisation is present and measurable.
+
+\subsection{Diffusion-Trajectory Feature Extraction}
+\label{sec:features}
+
+Each challenge text $x$ is evaluated at masking ratios
+$\boldsymbol{\alpha} = \{0.05,\,0.20,\,0.35,\,0.50\}$ ($T=4$ levels),
+with $K=8$ independent random masks per level to reduce variance.
+At each level $\alpha_j$ we compute 11--12 scalar signals, giving a
+46-dimensional feature vector $\phi(x)$ after concatenation.
+The main signal groups are:
+
+\textbf{ELBO trajectory} (4 dims): the masked NLL $\mathcal{L}(x;\alpha_j)$ at each ratio.
+Members have lower values and a more concave curve.
+
+\textbf{ELBO derivatives} (8 dims): finite-difference estimates of $dL/dt$ and $d^2L/dt^2$.
+
+\textbf{Predictive entropy} (4 dims): mean $-\sum_v p_\theta(v|x_{\alpha_j})\log p_\theta(v|x_{\alpha_j})$
+over masked positions at each level.
+
+\textbf{Mask consistency} (4 dims): agreement between two independent mask realisations at the same $\alpha_j$.
+
+\textbf{Hidden-state statistics} (8 dims): mean $\ell_2$-norm and cosine similarity between the
+fine-tuned and base model hidden states.
+
+\textbf{Attention signals} (16 dims): attention entropy, cross-layer correlation,
+transport barycenter, and attention perturbation at each masking level.
+
+\textbf{Cross-model cosine} (1 dim) and \textbf{ELBO variance} (1 dim) round out the 46 dimensions.
+The full breakdown is in Appendix~\ref{app:features}.
+
+\subsection{Attack Classifiers}
+\label{sec:classifiers}
+
+We train three classifiers on $\phi(x)$:
+XGBoost~\citep{chen2016xgboost} (200 trees, depth 4, lr 0.05, subsample 0.8),
+LightGBM (same settings), and an MLP with hidden layers (256, 128, 64),
+dropout 0.3, and early stopping on a 20\% validation split.
+All three use 5-fold stratified cross-validation; out-of-fold probabilities
+feed the final AUC computation. Bootstrap CIs use 1000 resamples.
+
+\subsection{Shadow-Model Transfer}
+\label{sec:shadow}
+
+For settings where the attacker has no membership labels in the target domain,
+we train $K_s=3$ shadow MDLMs on surrogate data from the \texttt{ngram\_13\_0.2}
+MIMIR split, pooling across all six domains ($\approx$5,695 members total,
+disjoint from the evaluation set). Features are extracted from each shadow
+model's training and held-out sequences in the same 46-dimensional space,
+giving labelled pairs $(\phi_{\mathrm{shadow}}, y_{\mathrm{shadow}})$.
+An XGBoost classifier trained on this shadow data is then applied directly
+to features from the target fine-tuned model, with no retraining.
+
+We evaluate five conditions to map out the attack surface (Table~\ref{tab:shadow}):
+
+\textbf{A (Oracle):} 5-fold CV using target membership labels. This is the white-box upper bound.
+
+\textbf{B (Shadow-46):} Full 46-dim shadow transfer, no target labels.
+
+\textbf{C (ELBO+H):} 8-dim subset: ELBO and entropy features only.
+
+\textbf{D (Attn-only):} 16-dim attention features only (negative control).
+
+\textbf{E (Pruned-30):} 46-dim minus the 16 attention dimensions.

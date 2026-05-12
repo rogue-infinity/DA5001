@@ -111,9 +111,8 @@ mlruns/
 # ── dllm subpackage (has own .git) ───────────────────────────────
 **/code/dllm/
 
-# ── SAMA repo clones (has own .git) ──────────────────────────────
-**/code/SAMA/
-Project/SAMA/
+# ── SAMA repo clones (has own .git, appears at multiple depths) ──
+**/SAMA/
 
 # ── Standalone sub-repo (has its own .git) ───────────────────────
 Project/Project/Whitebox and Shadow Models dLLM Attacks/

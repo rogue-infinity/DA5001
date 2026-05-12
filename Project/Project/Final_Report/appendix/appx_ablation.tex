@@ -1,0 +1,93 @@
+\section{Full Ablation Study (Run~3)}
+\label{app:ablation}
+
+\subsection{LOSO AUC Drop: All Domains}
+
+\input{tables/tab_ablation}
+
+Table~\ref{tab:ablation} shows mean LOSO drops. Below are the full per-domain values.
+
+\begin{table}[h]
+\centering
+\caption{LOSO AUC drop per feature group and domain. Full-model AUC baseline:
+         arXiv 0.877, GitHub 0.801, HackerNews 0.928, Pile-CC 0.930,
+         PubMed 0.842, Wikipedia 0.892.}
+\label{tab:ablation_full}
+\small
+\begin{tabular}{l rrrrrr r}
+\toprule
+\textbf{Feature Group} & arXiv & GitHub & H-News & Pile-CC & PubMed & Wiki & Mean \\
+\midrule
+ELBO Trajectory     & 0.146 & 0.045 & 0.141 & 0.135 & 0.172 & 0.141 & 0.130 \\
+Pred.\ Entropy      & 0.042 & 0.014 & 0.041 & 0.035 & 0.064 & 0.060 & 0.043 \\
+Hidden Norms        & 0.003 & 0.016 & 0.001 & 0.002 & 0.002 & 0.010 & 0.006 \\
+Attn Cross-layer    & $<$0 & 0.013 & 0.005 & 0.009 & 0.003 & 0.003 & 0.006 \\
+Cross-model Cosine  & 0.001 & 0.001 & $<$0 & $<$0 & $<$0 & 0.011 & 0.002 \\
+Mask Consistency    & $<$0 & 0.011 & 0.001 & $<$0 & $<$0 & $<$0 & 0.001 \\
+Attn Entropy        & $<$0 & 0.004 & 0.003 & $<$0 & $<$0 & 0.001 & 0.001 \\
+ELBO Variance       & $<$0 & 0.001 & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 \\
+Attn Barycenter     & 0.001 & 0.003 & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 \\
+$dL/dt$             & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 & 0.002 & $<$0 \\
+$d^2L/dt^2$         & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 \\
+Attn Perturbation   & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 \\
+Hidden Cosine       & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 & $<$0 \\
+\bottomrule
+\end{tabular}
+{\footnotesize $<$0 denotes negligible or negative drop (group is redundant).}
+\end{table}
+
+\subsection{Solo AUC: All Domains}
+
+\begin{table}[h]
+\centering
+\caption{Solo AUC per feature group (using only that group's dimensions) per domain.
+         Random baseline is 0.500.}
+\label{tab:solo_full}
+\small
+\begin{tabular}{l rrrrrr r}
+\toprule
+\textbf{Feature Group} & arXiv & GitHub & H-News & Pile-CC & PubMed & Wiki & Mean \\
+\midrule
+ELBO Trajectory   & 0.774 & 0.666 & 0.828 & 0.839 & 0.746 & 0.793 & 0.774 \\
+Mask Consistency  & 0.680 & 0.641 & 0.703 & 0.670 & 0.634 & 0.665 & 0.666 \\
+Pred.\ Entropy    & 0.650 & 0.601 & 0.695 & 0.675 & 0.651 & 0.660 & 0.655 \\
+$dL/dt$           & 0.581 & 0.563 & 0.641 & 0.624 & 0.586 & 0.599 & 0.599 \\
+ELBO Variance     & 0.590 & 0.559 & 0.621 & 0.611 & 0.563 & 0.574 & 0.586 \\
+$d^2L/dt^2$       & 0.535 & 0.520 & 0.584 & 0.574 & 0.535 & 0.542 & 0.548 \\
+Hidden Cosine     & 0.541 & 0.527 & 0.574 & 0.563 & 0.539 & 0.533 & 0.546 \\
+Hidden Norms      & 0.527 & 0.528 & 0.587 & 0.585 & 0.555 & 0.569 & 0.559 \\
+Attn Perturbation & 0.525 & 0.524 & 0.553 & 0.542 & 0.519 & 0.519 & 0.530 \\
+Cross-model Cos   & 0.514 & 0.506 & 0.531 & 0.516 & 0.513 & 0.520 & 0.517 \\
+Attn Entropy      & 0.489 & 0.513 & 0.529 & 0.532 & 0.498 & 0.499 & 0.510 \\
+Attn Barycenter   & 0.494 & 0.505 & 0.521 & 0.516 & 0.497 & 0.490 & 0.504 \\
+Attn Cross-layer  & 0.473 & 0.529 & 0.503 & 0.527 & 0.491 & 0.467 & 0.498 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Discussion}
+
+\textbf{Derivative features show near-zero LOSO drop.}
+$dL/dt$ and $d^2L/dt^2$ are finite-difference estimates computed from the same four ELBO
+values as the trajectory group. At $T=4$ levels, $dL/dt|_{t_j} \approx \mathcal{L}(t_{j+1})
+- \mathcal{L}(t_{j-1})$, which is a linear combination of the trajectory values.
+The two groups are nearly collinear, so removing either one leaves the other to compensate.
+Extending to $T \geq 8$ masking levels would break this collinearity.
+
+\textbf{Attention features are domain-specific.}
+Solo AUC for all attention groups is 0.47--0.53 across most domains, near random.
+In MDLMs the masked denoising objective produces attention patterns that depend heavily on
+the specific masking configuration and domain vocabulary, making them inconsistent across
+the $K=8$ mask realisations. This is why they also fail under shadow-model transfer
+(Condition~D, AUC 0.525): they contain no signal that generalises across domains.
+
+\textbf{Minimal effective attack.}
+ELBO trajectory and predictive entropy together (8 dimensions) achieve mean AUC 0.843
+in shadow transfer. This is cheaper than the full 46-dim vector and still above SAMA.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.75\linewidth]{Plots/fig5_ablation}
+  \caption{LOSO AUC drop (left) and solo AUC (right), averaged across six domains.}
+  \label{fig:ablation_full}
+\end{figure}

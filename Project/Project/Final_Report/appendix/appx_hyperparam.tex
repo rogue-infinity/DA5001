@@ -1,0 +1,48 @@
+\section{Hyperparameter Search: Run~2}
+\label{app:hyperparam}
+
+Run~2 extended the proof-of-concept by introducing all five attack methods
+(Loss, Zlib, Ratio, SAMA, XGBoost, MLP) on the GitHub domain and varying the
+number of fine-tuning epochs to find the operating point with the best
+membership discriminability.
+
+\subsection*{Epoch Ablation}
+
+The central finding is that discriminability is \emph{non-monotone} in training
+epochs.  With too few epochs the model has not memorised sufficiently to create
+an ELBO gap; with too many epochs (15 as in Run~1), over-memorisation causes
+the SAMA baseline to collapse and makes the domain generally ``easy'' regardless
+of membership status.  The 5-epoch operating point produced ELBO member gaps
+of 2.19--2.75 nats across domains—within SAMA's designed operating range—while
+maintaining strong XGBoost discriminability.
+
+\subsection*{Final Hyperparameter Configuration}
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Fine-tuning epochs         & 5 \\
+Learning rate              & $10^{-4}$ \\
+Weight decay               & 0.01 \\
+Batch size                 & 8 \\
+Precision                  & bfloat16 \\
+Masking ratios $\boldsymbol\alpha$ & \{0.05, 0.20, 0.35, 0.50\} \\
+Masks per ratio $K$        & 8 \\
+Feature dimensionality     & 46 \\
+SAMA subsets $N$           & 128 \\
+SAMA steps $T$             & 4 \\
+XGBoost trees              & 200 \\
+XGBoost max depth          & 4 \\
+XGBoost learning rate      & 0.05 \\
+MLP hidden layers          & (256, 128, 64) \\
+MLP dropout                & 0.3 \\
+CV folds                   & 5 \\
+Bootstrap samples          & 1000 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All experiments in Run~3 and Run~4 use these exact hyperparameters.

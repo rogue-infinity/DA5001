@@ -1,0 +1,57 @@
+\begin{table}[t]
+\centering
+\caption{Shadow-model transfer results by condition and domain.
+         \textbf{A}: Oracle (white-box upper bound, 5-fold CV on target labels).
+         \textbf{B}: Shadow-46 (full 46-dim transfer, no target labels).
+         \textbf{C}: ELBO+Entropy (8-dim subset only).
+         \textbf{D}: Attention-only (16-dim, negative control).
+         \textbf{E}: Pruned-30 (attention dims removed).
+         Mean $\pm$ std computed across six domains.}
+\label{tab:shadow}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l ccccc c}
+\toprule
+& \multicolumn{6}{c}{\textbf{AUC-ROC}} \\
+\cmidrule(lr){2-7}
+\textbf{Domain} & \textbf{A: Oracle} & \textbf{B: Shadow-46} & \textbf{C: ELBO+H} & \textbf{D: Attn} & \textbf{E: Pruned-30} & \textbf{SAMA} \\
+\midrule
+arXiv         & 0.877 & 0.858 & 0.853 & 0.494 & 0.853 & 0.783 \\
+GitHub        & 0.801 & 0.755 & 0.704 & 0.542 & 0.748 & 0.795 \\
+HackerNews    & 0.928 & 0.912 & 0.902 & 0.541 & 0.898 & 0.833 \\
+Pile-CC       & 0.930 & 0.913 & 0.907 & 0.563 & 0.907 & 0.885 \\
+PubMed        & 0.842 & 0.838 & 0.840 & 0.504 & 0.842 & 0.777 \\
+Wikipedia     & 0.892 & 0.874 & 0.854 & 0.507 & 0.872 & 0.823 \\
+\midrule
+\textbf{Mean} & \textbf{0.878} & \textbf{0.858} & 0.843 & 0.525 & 0.853 & 0.816 \\
+\textbf{Std}  & 0.050 & 0.059 & 0.074 & 0.027 & 0.057 & 0.037 \\
+\midrule
+& \multicolumn{6}{c}{\textbf{TPR @ 1\% FPR}} \\
+\cmidrule(lr){2-7}
+& \textbf{A: Oracle} & \textbf{B: Shadow-46} & \textbf{C: ELBO+H} & \textbf{D: Attn} & \textbf{E: Pruned-30} & \textbf{SAMA} \\
+\midrule
+arXiv         & 26.9\% &  10.4\% &  9.9\% & 1.1\% & 14.2\% &  3.4\% \\
+GitHub        & 15.9\% &   7.3\% &  2.3\% & 1.4\% & 10.5\% &  3.3\% \\
+HackerNews    & 40.1\% &  29.5\% & 35.3\% & 1.5\% & 28.3\% &  4.5\% \\
+Pile-CC       & 37.7\% &  40.4\% & 25.7\% & 1.7\% & 32.9\% & 10.4\% \\
+PubMed        & 18.2\% &   9.7\% & 22.2\% & 2.0\% & 12.0\% &  3.3\% \\
+Wikipedia     & 25.7\% &  19.6\% & 19.7\% & 2.0\% & 22.3\% &  4.9\% \\
+\midrule
+\textbf{Mean} & \textbf{27.4\%} & \textbf{19.5\%} & 19.2\% & 1.6\% & 20.0\% & 4.9\% \\
+\midrule
+& \multicolumn{6}{c}{\textbf{TPR @ 0.1\% FPR}} \\
+\cmidrule(lr){2-7}
+& \textbf{A: Oracle} & \textbf{B: Shadow-46} & \textbf{C: ELBO+H} & \textbf{D: Attn} & \textbf{E: Pruned-30} & \textbf{SAMA} \\
+\midrule
+arXiv         & 12.1\% &  2.4\% &  3.2\% & 0.0\% &  5.9\% & -- \\
+GitHub        &  8.3\% &  3.3\% &  0.0\% & 0.8\% &  2.9\% & -- \\
+HackerNews    & 14.8\% &  5.7\% & 12.9\% & 0.4\% &  3.4\% & -- \\
+Pile-CC       & 17.5\% & 23.1\% &  6.0\% & 0.6\% & 15.0\% & -- \\
+PubMed        &  4.1\% &  1.3\% & 10.4\% & 0.2\% &  2.3\% & -- \\
+Wikipedia     &  8.5\% &  4.1\% &  0.7\% & 0.0\% &  8.5\% & -- \\
+\midrule
+\textbf{Mean} & \textbf{10.9\%} & \textbf{6.6\%} & 5.5\% & 0.3\% & 6.3\% & -- \\
+\bottomrule
+\end{tabular}
+{\footnotesize ``--'' for SAMA at 0.1\% FPR: SAMA's score distribution does not resolve below 1\% FPR reliably with $N=128$ subsets.}
+\end{table}

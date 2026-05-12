@@ -1,0 +1,320 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{rotating}
+\usepackage{caption}
+\usepackage{hyperref}
+
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcommand{\na}{---}
+\newcommand{\best}[1]{\textbf{#1}}
+
+\title{Run 4 --- Shadow Model MIA: Results \& Ablations\\
+\large MDLM-OWT (Qwen3-0.6B), MIMIR Benchmark, All 6 Domains}
+\author{DA5001 Project}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+%% ============================================================
+\section{Experimental Setup}
+%% ============================================================
+
+\subsection*{Model \& Data}
+Target model: \texttt{dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1} (MDLM, 0.6B parameters).
+Membership split: \texttt{ngram\_13\_0.8} (target), \texttt{ngram\_13\_0.2} (shadow surrogate).
+Domains evaluated: arxiv, github, hackernews, pubmed\_central, wikipedia, pile\_cc (all 6 MIMIR domains).
+
+\subsection*{Shadow Model Protocol}
+\begin{itemize}
+  \item $K=3$ shadow models fine-tuned on pooled surrogate data (all 6 MIMIR domains pooled, $\approx$5{,}695 members total, 1{,}000 per shadow model after chunking).
+  \item Pooled cross-domain shadow prevents data starvation for sparse domains (e.g.\ hackernews had only 35 domain-specific surrogates).
+  \item 46-dimensional feature vector extracted at 4 diffusion timesteps ($t \in \{0.05, 0.20, 0.35, 0.50\}$): ELBO, predicted entropy, mask consistency, attention entropy, gradient norms.
+  \item XGBoost trained on shadow features, transferred to target domain without labels.
+\end{itemize}
+
+\subsection*{Conditions}
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Label} & \textbf{Description} & \textbf{Dims} \\
+\midrule
+A: Oracle   & 5-fold CV on target (white-box upper bound, replays Run3) & 46 \\
+B: Shadow   & Shadow $\to$ target transfer, full feature set             & 46 \\
+C: ELBO+H   & Transfer, permutation-invariant ELBO + entropy only        & 8  \\
+D: Attn     & Transfer, attention dims only (negative control)           & 16 \\
+E: Pruned   & Transfer, drop attention dims (ablation of B)              & 30 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Baselines}
+\begin{itemize}
+  \item \textbf{SAMA} (Subset-Aggregated MIA): $T=4$ steps, $N=128$ subsets, $m=10$ tokens, $\alpha \in [5\%, 50\%]$. Run in Run3; scores loaded directly.
+  \item \textbf{Oracle} (Condition A): white-box upper bound; requires full model access and target labels.
+\end{itemize}
+
+%% ============================================================
+\section{AUC-ROC Results}
+%% ============================================================
+
+\subsection{Per-Domain, Per-Condition AUC}
+
+\begin{table}[ht]
+\centering
+\caption{AUC-ROC (bootstrap mean, 1000 samples) per condition and domain. Condition D (attention-only) is a negative control. Best shadow transfer per domain in \textbf{bold}.}
+\label{tab:auc_grid}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Domain} & \textbf{A: Oracle} & \textbf{B: Shadow} & \textbf{C: ELBO+H} & \textbf{D: Attn} & \textbf{E: Pruned} \\
+\midrule
+arxiv          & 0.8766 & \best{0.8578} & 0.8526 & 0.4944 & 0.8531 \\
+github         & 0.8011 & \best{0.7548} & 0.7041 & 0.5417 & 0.7477 \\
+hackernews     & 0.9276 & \best{0.9120} & 0.9019 & 0.5410 & 0.8983 \\
+pubmed\_central & 0.8419 & 0.8381        & 0.8395 & 0.5036 & \best{0.8418} \\
+wikipedia      & 0.8920 & \best{0.8741} & 0.8540 & 0.5069 & 0.8720 \\
+pile\_cc        & 0.9303 & \best{0.9129} & 0.9067 & 0.5626 & 0.9065 \\
+\midrule
+\textbf{Mean}  & \textbf{0.8783} & 0.8583 & 0.8431 & 0.5250 & 0.8532 \\
+\textbf{Std}   & 0.0502 & 0.0587 & 0.0735 & 0.0271 & 0.0574 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Unified 3-Attack Comparison: Oracle vs SAMA vs Shadow}
+
+\begin{table}[ht]
+\centering
+\caption{AUC comparison across three attack threat models. Gap columns show how much each attack falls below the oracle (lower gap = better privacy risk). SAMA uses model access only; Shadow uses surrogate fine-tuned models; Oracle requires target labels.}
+\label{tab:unified_auc}
+\begin{tabular}{lcccc|ccc}
+\toprule
+\textbf{Domain} & \textbf{Oracle} & \textbf{SAMA} & \textbf{Shadow-B} & \textbf{Shadow-E}
+  & $\Delta$\textbf{SAMA} & $\Delta$\textbf{B} & $\Delta$\textbf{E} \\
+\midrule
+arxiv          & 0.8766 & 0.7829 & 0.8578 & 0.8531 & 0.094 & 0.019 & 0.024 \\
+github         & 0.8011 & 0.7948 & 0.7548 & 0.7477 & 0.006 & 0.046 & 0.054 \\
+hackernews     & 0.9276 & 0.8328 & 0.9120 & 0.8983 & 0.095 & 0.016 & 0.029 \\
+pubmed\_central & 0.8419 & 0.7768 & 0.8381 & 0.8418 & 0.065 & 0.004 & 0.000 \\
+wikipedia      & 0.8920 & 0.8228 & 0.8741 & 0.8720 & 0.069 & 0.018 & 0.020 \\
+pile\_cc        & 0.9303 & 0.8848 & 0.9129 & 0.9065 & 0.045 & 0.017 & 0.024 \\
+\midrule
+\textbf{Mean}  & \textbf{0.8783} & 0.8158 & 0.8583 & 0.8532 & 0.062 & 0.020 & 0.025 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{plots/fig_r4_7_unified_comparison.pdf}
+\caption{Threat-model progression across 5 domains. Shadow-B and Shadow-E closely track the oracle; SAMA trails by $\approx$0.056 AUC on average.}
+\label{fig:unified}
+\end{figure}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{plots/fig_r4_1_condition_comparison.pdf}
+\caption{AUC per condition and domain. Condition D (attention-only) consistently collapses to $\approx$0.50--0.56, confirming attention features are not transferable across shadow/target.}
+\label{fig:conditions}
+\end{figure}
+
+%% ============================================================
+\section{Oracle Gap Ablation}
+%% ============================================================
+
+\begin{table}[ht]
+\centering
+\caption{Mean oracle gap (Oracle AUC $-$ Condition AUC) across 5 domains. Lower = better label-free transfer.}
+\label{tab:oracle_gap}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Condition} & \textbf{Mean Gap} & \textbf{Std} \\
+\midrule
+A: Oracle (Run3)     & 0.0000 & 0.0000 \\
+B: Shadow 46-dim     & 0.0202 & 0.0157 \\
+E: Shadow 30-dim     & 0.0253 & 0.0192 \\
+C: ELBO+H 8-dim      & 0.0373 & 0.0357 \\
+D: Attn-only 16-dim  & 0.3474 & 0.0529 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.75\linewidth]{plots/fig_r4_2_oracle_gap.pdf}
+\caption{Oracle gap per condition (mean $\pm$ std across 5 domains). B and E are within 0.025 of oracle; D collapses.}
+\label{fig:gap}
+\end{figure}
+
+%% ============================================================
+\section{TPR at Low FPR}
+%% ============================================================
+
+All values computed \emph{exactly} from stored raw probability scores and true labels (not from bootstrap CIs), ensuring oracle, SAMA, and shadow conditions are directly comparable at any FPR threshold.
+
+\subsection{Per-Domain TPR@1\%FPR (Headline Metric)}
+
+\begin{table}[ht]
+\centering
+\caption{TPR at 1\% FPR (exact from raw scores). This is the primary low-FPR metric used in membership inference literature.}
+\label{tab:tpr1pct}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Domain} & \textbf{Oracle} & \textbf{SAMA} & \textbf{Shadow-B} & \textbf{Shadow-E} \\
+\midrule
+arxiv          & 0.269 & 0.034 & 0.104 & 0.142 \\
+github         & 0.159 & 0.033 & 0.073 & 0.105 \\
+hackernews     & 0.401 & 0.045 & 0.295 & 0.283 \\
+pubmed\_central & 0.182 & 0.033 & 0.097 & 0.120 \\
+wikipedia      & 0.257 & 0.049 & 0.196 & 0.223 \\
+pile\_cc        & 0.377 & 0.104 & 0.404 & 0.329 \\
+\midrule
+\textbf{Mean}  & \textbf{0.274} & 0.050 & 0.195 & 0.200 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{plots/fig_r4_6_tpr_at_1pct_fpr.pdf}
+\caption{TPR@1\%FPR across attacks and domains. Shadow-B/E substantially outperform SAMA at this threshold.}
+\label{fig:tpr1pct}
+\end{figure}
+
+\subsection{Full Low-FPR Table (Mean Across 5 Domains)}
+
+\begin{table}[ht]
+\centering
+\caption{Mean TPR at multiple FPR thresholds across 5 domains (exact computation from raw scores). Condition D omitted for clarity.}
+\label{tab:tpr_full}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Attack / Condition} & \textbf{0.1\%} & \textbf{0.5\%} & \textbf{1\%} & \textbf{2\%} & \textbf{5\%} & \textbf{10\%} \\
+\midrule
+Oracle (white-box)     & 0.109 & 0.199 & 0.274 & 0.361 & 0.523 & 0.641 \\
+A: Oracle (Run3 CV)    & 0.109 & 0.199 & 0.274 & 0.361 & 0.523 & 0.641 \\
+\midrule
+SAMA ($T=4$, $N=128$)  & 0.005 & 0.025 & 0.050 & 0.099 & 0.248 & 0.436 \\
+\midrule
+B: Shadow 46-dim       & 0.067 & 0.128 & 0.195 & 0.285 & 0.445 & 0.588 \\
+C: Shadow ELBO+H 8-dim & 0.055 & 0.125 & 0.192 & 0.263 & 0.410 & 0.558 \\
+E: Shadow 30-dim       & 0.063 & 0.145 & 0.200 & 0.276 & 0.443 & 0.575 \\
+\midrule
+D: Attn-only (ctrl)    & 0.003 & 0.008 & 0.016 & 0.030 & 0.067 & 0.120 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ============================================================
+\section{Feature Analysis}
+%% ============================================================
+
+\subsection{Hellinger Distance: Member vs.\ Non-Member Distributions}
+
+\begin{table}[ht]
+\centering
+\caption{Top-10 features by mean Hellinger distance between member and non-member distributions on the \emph{target} population (averaged across 5 domains). Higher = more discriminative.}
+\label{tab:hellinger}
+\begin{tabular}{lc}
+\toprule
+\textbf{Feature} & \textbf{Mean Hellinger} \\
+\midrule
+\texttt{elbo\_t2\_a0.35}       & 0.416 \\
+\texttt{elbo\_t1\_a0.20}       & 0.414 \\
+\texttt{elbo\_t3\_a0.50}       & 0.404 \\
+\texttt{elbo\_t0\_a0.05}       & 0.376 \\
+\texttt{pred\_entropy\_t1}     & 0.283 \\
+\texttt{mask\_consistency\_t1} & 0.280 \\
+\texttt{pred\_entropy\_t0}     & 0.271 \\
+\texttt{pred\_entropy\_t2}     & 0.270 \\
+\texttt{mask\_consistency\_t2} & 0.267 \\
+\texttt{pred\_entropy\_t3}     & 0.262 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Key observation:} ELBO features at mid-to-high noise timesteps ($t=0.20, 0.35, 0.50$) are the most discriminative, with Hellinger $H \approx 0.40$--$0.42$. Attention features (not shown) have negligible $H$, consistent with Condition D's collapse. Shadow-distribution Hellinger (not shown) mirrors the target closely, validating feature transferability.
+
+\begin{figure}[ht]
+\centering
+\begin{subfigure}[b]{0.48\linewidth}
+  \includegraphics[width=\linewidth]{plots/fig_r4_3_hellinger_target.pdf}
+  \caption{Target population}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.48\linewidth}
+  \includegraphics[width=\linewidth]{plots/fig_r4_3_hellinger_shadow.pdf}
+  \caption{Shadow population}
+\end{subfigure}
+\caption{Hellinger distance heatmaps (feature $\times$ domain). ELBO features dominate across both populations, confirming feature transferability from shadow to target.}
+\label{fig:hellinger}
+\end{figure}
+
+%% ============================================================
+\section{Condition B vs.\ E: Attention Ablation}
+%% ============================================================
+
+\begin{table}[ht]
+\centering
+\caption{Shadow-B (46-dim) vs.\ Shadow-E (30-dim, no attention) AUC and TPR@1\%FPR. Dropping 16 attention dimensions causes minimal degradation, confirming attention features are noise in the shadow setting.}
+\label{tab:bvse}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Domain} & \textbf{B AUC} & \textbf{E AUC} & \textbf{B TPR@1\%} & \textbf{E TPR@1\%} \\
+\midrule
+arxiv          & 0.8578 & 0.8531 & 0.104 & 0.142 \\
+github         & 0.7548 & 0.7477 & 0.073 & 0.105 \\
+hackernews     & 0.9120 & 0.8983 & 0.295 & 0.283 \\
+pubmed\_central & 0.8381 & 0.8418 & 0.097 & 0.120 \\
+wikipedia      & 0.8741 & 0.8720 & 0.196 & 0.223 \\
+pile\_cc        & 0.9129 & 0.9065 & 0.404 & 0.329 \\
+\midrule
+\textbf{Mean}  & 0.8583 & 0.8532 & 0.195 & 0.200 \\
+\textbf{$\Delta$ (B$-$E)} & \multicolumn{2}{c}{$+0.005$} & \multicolumn{2}{c}{$-0.005$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent B beats E by only 0.005 AUC on average; E wins on pubmed\_central and wikipedia by TPR@1\%. This confirms: \textit{attention features contribute negligible signal in the label-free shadow transfer setting and can be safely pruned.}
+
+%% ============================================================
+\section{Summary Statistics}
+%% ============================================================
+
+\begin{table}[ht]
+\centering
+\caption{Summary: mean AUC and mean TPR@1\%FPR across 5 domains.}
+\label{tab:summary}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Attack} & \textbf{Threat Model} & \textbf{Mean AUC} & \textbf{Mean TPR@1\%} \\
+\midrule
+Oracle (A)     & White-box, target labels & 0.878 & 0.274 \\
+SAMA           & Model access only         & 0.816 & 0.050 \\
+Shadow-B (B)   & Surrogate models, 46-dim  & 0.858 & 0.195 \\
+Shadow-E (E)   & Surrogate models, 30-dim  & 0.853 & 0.200 \\
+\midrule
+D: Attn-only   & (negative control)        & 0.525 & 0.016 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Key findings (5-domain preliminary):}
+\begin{enumerate}
+  \item Shadow transfer (B/E) closes to within $\Delta=0.020$--$0.025$ AUC of the white-box oracle, despite having no target labels.
+  \item Shadow-B and Shadow-E are nearly identical ($\Delta=0.005$ AUC), meaning the 16 attention dimensions carry no useful cross-domain signal.
+  \item SAMA trails shadow transfer by $\approx$0.036 AUC on average, with a much larger gap at low FPR (TPR@1\%: 0.053 vs 0.213).
+  \item ELBO features at $t \in \{0.20, 0.35, 0.50\}$ are the primary signal carriers (Hellinger $\approx$0.40--0.42).
+  \item Condition D (attention-only) collapses to AUC $\approx$0.53, validating the feature pruning rationale.
+\end{enumerate}
+
+\end{document}

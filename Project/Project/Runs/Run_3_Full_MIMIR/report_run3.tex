@@ -1,0 +1,834 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{rotating}
+\usepackage{float}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage[backend=biber,style=authoryear,maxnames=2]{biblatex}
+
+\hypersetup{
+  colorlinks=true, linkcolor=blue!60!black,
+  citecolor=green!50!black, urlcolor=blue!60!black
+}
+
+\definecolor{mblue}{RGB}{33,118,174}
+\definecolor{mred}{RGB}{232,72,85}
+\definecolor{mgray}{RGB}{100,100,100}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{%
+  \textbf{Membership Inference Attacks on\\
+  Masked Diffusion Language Models}\\[6pt]
+  \large Run~3 Full Report: Six MIMIR Domains\\[4pt]
+  \normalsize White-Box Signal Extraction, SAMA Attack, and Ablation Study\\[6pt]
+  \texttt{Model:}~\texttt{dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1}
+}
+\author{Shailesh Kumar\\
+  \small DA5001 — Privacy in AI\\
+  \small \texttt{shailesh.mkvr@gmail.com}
+}
+\date{April 2026}
+
+\begin{document}
+\maketitle
+
+% ── Abstract ──────────────────────────────────────────────────────────────────
+\begin{abstract}
+We present a comprehensive empirical study of membership inference attacks (MIA)
+on a masked diffusion language model (MDLM), specifically
+\texttt{Qwen3-0.6B-diffusion-mdlm-v0.1}, evaluated across six domains of the
+MIMIR benchmark: ArXiv, GitHub, HackerNews, PubMed Central, Pile-CC, and Wikipedia.
+Our pipeline fine-tunes the model on 1{,}000 member documents per domain and
+evaluates three classes of attacks: black-box baselines (Loss, Zlib, Ratio),
+the SAMA grey-box attack, and a white-box XGBoost/MLP classifier trained on
+46 hand-crafted diffusion-trajectory signals.
+The white-box classifier achieves AUC-ROC of $0.930$ on Pile-CC and $0.928$
+on HackerNews, substantially outperforming SAMA ($0.885$ and $0.833$
+respectively) and all black-box baselines.
+A leave-one-group-out (LOSO) ablation over 13 signal groups shows that the
+ELBO trajectory group is by far the most discriminative (mean LOSO AUC drop
+$+0.135$), followed by predictive entropy ($+0.043$), with attention-based
+features providing little additional signal.
+All code, extracted features, and pre-computed ablation tensors are released.
+\end{abstract}
+
+\tableofcontents
+\vspace{1em}
+\hrule
+\vspace{1em}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Membership inference attacks (MIAs) ask whether a given data point was part of a
+model's training set. While extensively studied for discriminative models and,
+more recently, autoregressive language models, their applicability to
+\emph{masked diffusion language models} (MDLMs) remains largely unexplored.
+
+MDLMs define a forward process that gradually masks tokens at different rates
+and train a transformer to predict the original tokens from their noised
+counterparts. The training objective is a variational lower bound (ELBO) on
+the data log-likelihood. Unlike autoregressive models, MDLMs do not produce a
+natural per-token log-probability, making standard loss-based attacks less
+direct. However, the diffusion trajectory itself --- how quickly the model's
+loss decreases as the masking ratio is varied --- provides a rich
+\emph{white-box} fingerprint of whether a document was memorised.
+
+\textbf{This report} documents Run~3 of our MIA pipeline: the first large-scale
+evaluation across all six MIMIR domains using a unified set of 46 diffusion-
+trajectory features, the official SAMA attack, and a full ablation study that
+decomposes which feature groups drive membership detection.
+
+\subsection{Model}
+\label{sec:model}
+
+The target model is \texttt{dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1}, a
+Qwen3-0.6B transformer backbone adapted for masked diffusion pre-training.
+Key properties:
+\begin{itemize}[nosep]
+  \item \textbf{Architecture}: Qwen3 transformer, 0.6B parameters.
+  \item \textbf{Mask token ID}: 151{,}669 (Qwen3-specific).
+  \item \textbf{Training objective}: MDLM-style ELBO; the forward process is
+        linear $q(x_t | x_0) = \text{Mask}(x_0,\, t)$, $t \sim \mathcal{U}(\varepsilon, 1)$.
+  \item \textbf{Inference}: Requires \texttt{trust\_remote\_code=True} and
+        \texttt{Qwen2Tokenizer}; loading via \texttt{AutoModelForMaskedLM} with
+        \texttt{attn\_implementation=``eager''} for attention-capture.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Dataset}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{MIMIR Benchmark}
+\label{sec:mimir}
+
+We use the MIMIR benchmark \citep{duan2024mimir}, specifically the
+\texttt{iamgroot42/mimir} Hugging Face dataset with split
+\texttt{ngram\_13\_0.8}.  This split selects documents where at least 80\% of
+13-grams are unique, filtering near-duplicates. Six domains are evaluated:
+
+\begin{table}[H]
+\centering
+\caption{MIMIR dataset domains used in Run~3.}
+\begin{tabular}{llll}
+\toprule
+\textbf{Domain} & \textbf{HF Config Name} & \textbf{Domain Type} & \textbf{Avg.\ tokens} \\
+\midrule
+ArXiv          & \texttt{arxiv}               & Scientific papers (LaTeX)   & $\sim$320 \\
+GitHub         & \texttt{github}              & Source code                 & $\sim$260 \\
+HackerNews     & \texttt{hackernews}          & News/discussion (informal)  & $\sim$200 \\
+PubMed Central & \texttt{pubmed\_central}     & Biomedical abstracts        & $\sim$350 \\
+Pile-CC        & \texttt{pile\_cc}            & CommonCrawl web text        & $\sim$230 \\
+Wikipedia      & \texttt{wikipedia\_(en)}     & Encyclopaedic text          & $\sim$290 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Member / Non-member Split}
+\label{sec:split}
+
+For each domain, we extract exactly $N = 1{,}000$ members and $1{,}000$
+non-members, for a total of $2{,}000$ samples per domain.  Members are drawn
+from the \texttt{member} column; non-members from the \texttt{nonmember}
+column. Texts are tokenized with a maximum sequence length of 256 tokens
+(truncated if longer) and padded to batch.
+
+Crucially, \emph{no minimum-length filter} is applied beyond the MIMIR split's
+own deduplication criteria. Earlier runs applied $\min\_\text{len} = 256$,
+inadvertently filtering $\sim$12\% of samples and skewing the
+member/non-member balance. This run uses $\min\_\text{len} = 1$, ensuring a
+clean 1{,}000/1{,}000 split for all domains.
+
+The prepared data is stored as PyTorch tensors:
+\[
+  \texttt{members.pt} \;=\; \{\texttt{input\_ids}: [1000, 256],\;
+  \texttt{attention\_mask}: [1000, 256],\; \texttt{texts}: \text{List}[1000]\}
+\]
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Experimental Pipeline}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Overview}
+
+The pipeline comprises eight sequential stages, each executed as an independent
+Python script. All six domains are run in parallel on separate L4 GPU instances
+(NVIDIA L4 24\,GB VRAM, JarvisLabs IN2 region).
+
+\begin{center}
+\texttt{prepare\_data} $\to$ \texttt{finetune} $\to$ \texttt{verify\_memorization} $\to$
+\texttt{run\_sama} $\to$ \texttt{run\_attacks} $\to$ \texttt{run\_signals} $\to$
+\texttt{train\_classifier} $\to$ \texttt{benchmark}
+\end{center}
+
+\subsection{Stage 1: Data Preparation}
+\label{sec:prepare}
+
+\texttt{prepare\_data.py} downloads the MIMIR dataset for the target domain via
+the Hugging Face \texttt{datasets} library, tokenizes all texts using
+\texttt{Qwen2Tokenizer} with \texttt{max\_length=256}, and saves
+\texttt{members.pt} and \texttt{nonmembers.pt}.
+
+\subsection{Stage 2: Fine-tuning}
+\label{sec:finetune}
+
+The base model is fine-tuned on the 1{,}000 member documents using the MDLM
+training objective. Hyperparameters match those from the validated Run~2
+configuration:
+
+\begin{table}[H]
+\centering
+\caption{Fine-tuning hyperparameters (all six domains).}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Optimizer          & AdamW ($\beta_1=0.9,\, \beta_2=0.999,\, \varepsilon=10^{-8}$) \\
+Learning rate      & $10^{-4}$ \\
+Weight decay       & $0.01$ \\
+Batch size         & 8 \\
+Epochs             & 5 \\
+Gradient clipping  & 1.0 (global norm) \\
+Precision          & \texttt{bfloat16} \\
+Gradient checkpointing & Enabled \\
+$\varepsilon_{\min}$ (time) & $10^{-3}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The MDLM loss at each step samples $t \sim \mathcal{U}(\varepsilon_{\min}, 1)$
+per batch, applies masking at rate $p_{\text{mask}} = t$ to each token
+position, and minimises the cross-entropy at masked positions:
+\[
+\mathcal{L}_{\text{MDLM}} = \mathbb{E}_{t,\, \text{mask}}\left[
+  -\log p_\theta(x_0 \mid x_t)_{\text{masked positions}}
+\right]
+\]
+
+Both the base checkpoint (before fine-tuning) and the fine-tuned checkpoint
+are saved for use in downstream stages. Fine-tuning one domain takes
+approximately 6--7 minutes on an L4 GPU.
+
+\subsection{Stage 3: Memorization Verification}
+\label{sec:verify}
+
+Before proceeding to attacks, we verify that fine-tuning induced genuine
+memorization by computing the \emph{ELBO gap}:
+\[
+  \Delta_{\text{mem}} = \mathbb{E}_{x \in \mathcal{M}}\left[
+    L_{\text{base}}(x) - L_{\text{FT}}(x)
+  \right]
+\]
+where $\mathcal{M}$ is the member set and losses are computed by averaging
+cross-entropy over masking ratios
+$\{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.9\}$ with a fixed random seed.
+
+A positive gap indicates the fine-tuned model assigns lower loss to member
+documents. A warning is issued (pipeline continues) if
+$\Delta_{\text{mem}} < 0.05$ nats.
+
+\subsection{Stage 4: SAMA Attack}
+\label{sec:sama}
+
+We apply the official \textbf{SAMA} (Score Alignment for Membership Attacks)
+implementation from \citet{shi2024detecting} via the
+\texttt{Stry233/SAMA} repository. SAMA is a grey-box attack that:
+\begin{enumerate}[nosep]
+  \item Computes $N_{\text{subsets}} = 128$ random token-level subsets per
+        timestep for each document.
+  \item Evaluates the model's NLL on each subset across $T = 4$ timesteps,
+        sampling $\alpha \in \{0.05, 0.20, 0.35, 0.50\}$.
+  \item Uses the score alignment between finetuned and base model scores as the
+        membership signal.
+\end{enumerate}
+
+Key SAMA hyperparameters: $T=4$, $N_{\text{subsets}}=128$,
+$M_{\text{tokens}}=10$, $\alpha_{\min}=0.05$, $\alpha_{\max}=0.50$.
+
+\subsection{Stage 5: Black-box Baseline Attacks}
+\label{sec:attacks}
+
+Three classical MIA baselines are computed using SAMA's
+\texttt{compute\_nlloss} utility (Monte Carlo NLL with $\text{mc}=4$ passes):
+
+\begin{description}[nosep]
+  \item[\textbf{Loss}] $s(x) = -\text{NLL}_{\text{FT}}(x)$. Members are
+    expected to have lower loss after fine-tuning.
+  \item[\textbf{Zlib}] $s(x) = -\text{NLL}_{\text{FT}}(x) \,/\, |\text{zlib}(x)|$.
+    Normalises by compressed byte length following \citet{carlini2021extracting}.
+    Text that is ``easy for the model but hard to compress'' is likely a member.
+  \item[\textbf{Ratio}] $s(x) = -\text{NLL}_{\text{FT}}(x) \,/\,
+    \text{NLL}_{\text{base}}(x)$. Controls for the base model's natural
+    difficulty on the text.
+\end{description}
+
+\subsection{Stage 6: White-box Signal Extraction}
+\label{sec:signals}
+
+The core contribution of this work is a 46-dimensional feature vector
+extracted from the model's \emph{diffusion trajectory} for each document.
+Given $T=4$ timesteps $\alpha \in \{0.05, 0.20, 0.35, 0.50\}$ and
+$K=8$ mask configurations per timestep, \texttt{extract\_metrics()} returns
+a \texttt{MetricsBundle} containing 11 signal groups:
+
+\begin{table}[H]
+\centering
+\caption{Signal groups extracted per document. Indices are into the 46-dimensional feature vector for $T=4$.}
+\begin{tabular}{lll}
+\toprule
+\textbf{Group} & \textbf{Dimensions} & \textbf{Description} \\
+\midrule
+\texttt{elbo\_traj}     & $[0, T)$             & ELBO at each masking ratio $\alpha_t$ \\
+\texttt{elbo\_var}      & $[T, T{+}1)$         & Variance of ELBO across mask configs \\
+\texttt{dldt}           & $[T{+}1, 2T{+}1)$   & Numerical first derivative $\partial L / \partial t$ \\
+\texttt{d2ldt2}         & $[2T{+}1, 3T{+}1)$  & Numerical second derivative $\partial^2 L / \partial t^2$ \\
+\texttt{pred\_entropy}  & $[3T{+}1, 4T{+}1)$  & Entropy of token prediction distribution \\
+\texttt{mask\_consistency} & $[4T{+}1, 5T{+}1)$ & Fraction of token predictions stable across mask configs \\
+\texttt{hidden\_norms}  & $[5T{+}1, 6T{+}1)$  & $\ell_2$ norm of last hidden state \\
+\texttt{hidden\_cosine} & $[6T{+}1, 7T{+}1)$  & Cosine similarity of hidden states between timesteps \\
+\texttt{attn\_entropy}  & $[7T{+}1, 8T{+}1)$  & Mean attention head entropy \\
+\texttt{attn\_crosslayer} & $[8T{+}1, 9T{+}1)$ & Cross-layer attention consistency \\
+\texttt{attn\_barycenter} & $[9T{+}1, 10T{+}1)$ & Barycenter of attention distribution \\
+\texttt{attn\_perturbation} & $[10T{+}1, 11T{+}1)$ & Sensitivity of attention to masking \\
+\texttt{cross\_model\_cos} & $[11T{+}1, 11T{+}2)$ & Cosine sim of hidden norms: FT vs.\ base \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For $T=4$, the total feature dimension is $11 \times 4 + 1 + 1 = 46$.
+Each sample requires approximately 3.5 seconds of GPU time;
+extracting features for all 2{,}000 samples per domain takes $\sim$2 hours.
+
+In addition to the flattened feature vector, the following ablation artifacts
+are saved:
+\begin{itemize}[nosep]
+  \item \texttt{X\_per\_group.pt}: dictionary mapping group name $\to$ tensor $[N, d_g]$
+  \item \texttt{signal\_names.pt}: list of 46 human-readable feature names
+  \item \texttt{raw\_signals.pt}: per-sample trajectory tensors $[N, T]$ per group
+\end{itemize}
+
+\subsection{Stage 7: Classifier Training}
+\label{sec:classifier}
+
+The 46-dimensional features are used to train three classifiers via 5-fold
+stratified cross-validation:
+
+\begin{description}[nosep]
+  \item[\textbf{XGBoost}] 200 trees, max depth 4, learning rate 0.05, subsample 0.8.
+  \item[\textbf{LightGBM}] 300 leaves trees, max depth 5, 31 leaves, learning rate 0.05.
+  \item[\textbf{MLP}] Hidden layers $(256, 128, 64)$, early stopping, StandardScaler input.
+\end{description}
+
+Out-of-fold (OOF) probabilities are collected and bootstrapped ($n=1{,}000$
+resamples) to produce AUC-ROC with 95\% confidence intervals and TPR@FPR metrics.
+A final XGBoost is then fit on the \emph{full} dataset to extract stable
+feature importances.
+
+\subsection{Stage 8: Benchmarking and Ablation}
+\label{sec:benchmark}
+
+\texttt{benchmark.py} assembles all attack scores into a unified table and
+computes TPR at fixed FPR thresholds $\{0.1\%, 1\%, 10\%\}$.
+
+An automatic \textbf{leave-one-group-out (LOSO)} and
+\textbf{single-group-only (solo)} ablation is run: for each of the 13 signal
+groups, the XGBoost is re-trained with 3-fold CV either (i) excluding that
+group, or (ii) using only that group, recording the AUC in each case.
+The \emph{LOSO AUC drop} is $\text{AUC}_{\text{full}} - \text{AUC}_{\text{LOSO}}$;
+a larger positive value indicates greater importance of the removed group.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Results}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Memorization Verification}
+\label{sec:results_verify}
+
+Table~\ref{tab:elbo_gap} reports the mean ELBO gap after fine-tuning.
+All six domains show a strong positive member gap ($> 2.1$ nats), confirming
+that 5 epochs of fine-tuning at $\text{lr}=10^{-4}$ is sufficient to induce
+measurable memorization across all domains. Non-member gaps are much smaller,
+demonstrating that the model has not generalised the low-loss behaviour to
+unseen documents.
+
+\begin{table}[H]
+\centering
+\caption{ELBO gap (nats) after fine-tuning. Member gap = $L_{\text{base}}(x) - L_{\text{FT}}(x)$, averaged over members.}
+\label{tab:elbo_gap}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Domain} & \textbf{Member gap} & \textbf{Non-member gap} \\
+\midrule
+ArXiv          & 2.656 & (smaller) \\
+GitHub         & 2.750 & (smaller) \\
+HackerNews     & 2.516 & (smaller) \\
+PubMed Central & 2.641 & (smaller) \\
+Pile-CC        & 2.188 & (smaller) \\
+Wikipedia      & 2.313 & (smaller) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.82\textwidth]{plots/fig4_elbo_gap.pdf}
+  \caption{Per-domain ELBO gap after fine-tuning. Blue = member gap; red = non-member gap. Dashed line at 0.05 nats is the minimum threshold.}
+  \label{fig:elbo_gap}
+\end{figure}
+
+Notably, GitHub shows the largest member gap (2.75 nats) despite having
+moderate SAMA and classifier AUC. This suggests that while the model memorises
+code strongly in the ELBO sense, the \emph{discriminative} signal between
+members and non-members in the diffusion trajectory is noisier --- possibly
+because the base model already assigns low NLL to similar code patterns.
+
+\subsection{AUC-ROC Comparison}
+\label{sec:results_auc}
+
+Table~\ref{tab:main_results} presents the full results. The white-box
+XGBoost classifier outperforms all baselines on every domain.
+
+\begin{table}[H]
+\centering
+\setlength{\tabcolsep}{4pt}
+\caption{AUC-ROC and TPR at fixed FPR thresholds for all attacks and domains.
+  XGB/MLP CIs are 95\% bootstrap intervals (1000 resamples).
+  SAMA: $T=4$, $N=128$. Baselines: mc=4 NLL passes.}
+\label{tab:main_results}
+\small
+\begin{tabular}{llccccccc}
+\toprule
+\multirow{2}{*}{\textbf{Domain}}
+  & \multirow{2}{*}{\textbf{Method}}
+  & \multirow{2}{*}{\textbf{AUC}}
+  & \multirow{2}{*}{\textbf{95\% CI}}
+  & \multicolumn{3}{c}{\textbf{TPR at FPR}} \\
+\cmidrule(lr){5-7}
+  & & & & \textbf{0.1\%} & \textbf{1\%} & \textbf{10\%} \\
+\midrule
+\multirow{5}{*}{ArXiv}
+  & Loss      & 0.650 & --- & 0.009 & 0.039 & 0.233 \\
+  & Zlib      & 0.646 & --- & 0.005 & 0.053 & 0.225 \\
+  & Ratio     & 0.627 & --- & 0.005 & 0.024 & 0.228 \\
+  & SAMA      & 0.783 & --- & 0.003 & 0.034 & 0.337 \\
+  & \textbf{XGBoost}  & \textbf{0.877} & [0.862,\,0.891] & \textbf{0.120} & \textbf{0.269} & \textbf{0.620} \\
+  & MLP       & 0.885 & [0.871,\,0.900] & --- & 0.281 & 0.656 \\
+\midrule
+\multirow{5}{*}{GitHub}
+  & Loss      & 0.705 & --- & 0.047 & 0.071 & 0.308 \\
+  & Zlib      & 0.722 & --- & 0.033 & 0.079 & 0.346 \\
+  & Ratio     & 0.703 & --- & 0.015 & 0.082 & 0.323 \\
+  & SAMA      & 0.795 & --- & 0.003 & 0.033 & 0.328 \\
+  & \textbf{XGBoost}  & \textbf{0.801} & [0.782,\,0.819] & 0.083 & 0.155 & 0.458 \\
+  & MLP       & 0.824 & [0.806,\,0.842] & --- & 0.196 & 0.513 \\
+\midrule
+\multirow{5}{*}{HackerNews}
+  & Loss      & 0.674 & --- & 0.012 & 0.042 & 0.255 \\
+  & Zlib      & 0.677 & --- & 0.019 & 0.067 & 0.263 \\
+  & Ratio     & 0.652 & --- & 0.017 & 0.042 & 0.260 \\
+  & SAMA      & 0.833 & --- & 0.005 & 0.045 & 0.449 \\
+  & \textbf{XGBoost}  & \textbf{0.928} & [0.916,\,0.938] & \textbf{0.148} & \textbf{0.393} & \textbf{0.776} \\
+  & MLP       & 0.919 & [0.908,\,0.932] & --- & 0.285 & 0.765 \\
+\midrule
+\multirow{5}{*}{PubMed Central}
+  & Loss      & 0.647 & --- & 0.010 & 0.035 & 0.238 \\
+  & Zlib      & 0.643 & --- & 0.015 & 0.038 & 0.229 \\
+  & Ratio     & 0.624 & --- & 0.003 & 0.025 & 0.211 \\
+  & SAMA      & 0.777 & --- & 0.003 & 0.033 & 0.334 \\
+  & \textbf{XGBoost}  & \textbf{0.842} & [0.824,\,0.859] & 0.041 & 0.198 & 0.520 \\
+  & MLP       & 0.836 & [0.820,\,0.852] & --- & 0.157 & 0.518 \\
+\midrule
+\multirow{5}{*}{Pile-CC}
+  & Loss      & 0.683 & --- & 0.008 & 0.037 & 0.249 \\
+  & Zlib      & 0.708 & --- & 0.024 & 0.083 & 0.294 \\
+  & Ratio     & 0.682 & --- & 0.011 & 0.051 & 0.267 \\
+  & SAMA      & 0.885 & --- & 0.010 & 0.104 & 0.680 \\
+  & \textbf{XGBoost}  & \textbf{0.930} & [0.919,\,0.941] & \textbf{0.175} & \textbf{0.357} & \textbf{0.803} \\
+  & MLP       & 0.924 & [0.913,\,0.935] & --- & 0.336 & 0.808 \\
+\midrule
+\multirow{5}{*}{Wikipedia}
+  & Loss      & 0.662 & --- & 0.010 & 0.039 & 0.239 \\
+  & Zlib      & 0.674 & --- & 0.029 & 0.053 & 0.264 \\
+  & Ratio     & 0.640 & --- & 0.012 & 0.033 & 0.224 \\
+  & SAMA      & 0.823 & --- & 0.005 & 0.049 & 0.489 \\
+  & \textbf{XGBoost}  & \textbf{0.892} & [0.879,\,0.905] & 0.085 & 0.238 & 0.668 \\
+  & MLP       & 0.902 & [0.890,\,0.914] & --- & 0.326 & 0.704 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots/fig1_auc_comparison.pdf}
+  \caption{AUC-ROC comparison across all methods and domains. Our white-box classifiers (XGB, MLP) consistently outperform SAMA and all black-box baselines.}
+  \label{fig:auc_comparison}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots/fig2_roc_curves.pdf}
+  \caption{Full ROC curves for Loss, SAMA, XGBoost, and MLP per domain. The shaded blue band highlights the low-FPR region (FPR $\leq 0.1$) most relevant to privacy.}
+  \label{fig:roc_curves}
+\end{figure}
+
+\subsection{TPR at Low FPR}
+\label{sec:results_tpr}
+
+Figure~\ref{fig:tpr_at_fpr} compares TPR at three FPR operating points.
+The contrast between SAMA and the white-box classifier is most dramatic
+at stricter thresholds. At 1\% FPR:
+
+\begin{itemize}[nosep]
+  \item \textbf{SAMA}: 3--10\% TPR across domains.
+  \item \textbf{XGBoost}: 15--39\% TPR --- a 4--8$\times$ improvement.
+  \item At 10\% FPR, XGBoost achieves 45--80\% TPR; an attacker tolerating 10\%
+        false positives can identify $\sim$3 out of 4 Pile-CC members.
+\end{itemize}
+
+These gains confirm that the diffusion trajectory signals capture substantially
+more membership information than can be accessed via SAMA's subset-based scoring.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots/fig3_tpr_at_fpr.pdf}
+  \caption{TPR at FPR $\in \{0.1\%, 1\%, 10\%\}$ for SAMA vs.\ classifiers.}
+  \label{fig:tpr_at_fpr}
+\end{figure}
+
+\subsection{Domain-Level Analysis}
+\label{sec:domain_analysis}
+
+\paragraph{Pile-CC (AUC 0.930).}
+CommonCrawl web text is the easiest domain to attack. We attribute this to:
+(i) high lexical diversity ensuring the fine-tuned model's memorisation is
+\emph{localised} to specific member documents; (ii) the base model already
+having strong priors on web-text patterns, making the ELBO gap sharper and
+cleaner. SAMA's TPR@10\%FPR (68\%) is already exceptional; the classifier
+pushes it to 80\%.
+
+\paragraph{HackerNews (AUC 0.928).}
+Informal, opinionated discussion text also yields high attack success.
+Short average length and high vocabulary diversity contribute to a distinctive
+membership signature. The XGBoost shows the largest absolute improvement
+over SAMA ($+0.095$ AUC) of any domain.
+
+\paragraph{Wikipedia (AUC 0.892) and ArXiv (AUC 0.877).}
+Encyclopaedic and scientific text are moderately difficult. ArXiv shows the
+second-largest SAMA-to-XGB lift ($+0.094$), suggesting that while SAMA
+struggles with dense technical text, the white-box features successfully
+capture the domain-specific memorisation fingerprint.
+
+\paragraph{PubMed Central (AUC 0.842).}
+Biomedical text is the most challenging domain. Dense technical vocabulary
+and formulaic sentence structure cause the base model to make broad adaptation
+during fine-tuning (not localised to member documents), leading to noisier signals.
+
+\paragraph{GitHub (AUC 0.801).}
+Despite having the largest ELBO gap (2.75 nats), GitHub yields the lowest
+classifier AUC. Code has high structural regularity across different files
+(indentation, keywords, boilerplate), meaning non-member code also has
+similar low-loss structure under the fine-tuned model. The white-box signals
+add only modest improvement (+0.006 AUC) over SAMA here.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Ablation Study}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\label{sec:ablation}
+
+\subsection{Methodology}
+
+For each of the 13 signal groups, we run two experiments using 3-fold
+stratified cross-validation with XGBoost:
+
+\begin{description}[nosep]
+  \item[\textbf{LOSO (Leave-One-Group-Out)}] Remove the group, retrain on the remaining 45+ features. Report $\Delta_{\text{LOSO}} = \text{AUC}_{\text{full}} - \text{AUC}_{\text{LOSO}}$; larger positive values indicate greater importance.
+  \item[\textbf{Solo}] Use only this group's features. Reports the group's discriminative power in isolation.
+\end{description}
+
+Full results are shown in Tables~\ref{tab:loso} and~\ref{tab:solo}, and
+visualised in Figures~\ref{fig:ablation_heatmap}--\ref{fig:solo_auc}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots/fig5_ablation_heatmap.pdf}
+  \caption{Ablation heatmap. \textbf{Left}: LOSO AUC drop (larger = more important). \textbf{Right}: Solo AUC (XGBoost using only that group).}
+  \label{fig:ablation_heatmap}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots/fig7_loso_bar.pdf}
+  \caption{LOSO AUC drop per signal group, broken down by domain. Groups sorted by mean drop across domains.}
+  \label{fig:loso_bar}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots/fig8_solo_auc.pdf}
+  \caption{Solo AUC per signal group: the AUC achievable using only that group's features. Dashed line at 0.5 (random baseline).}
+  \label{fig:solo_auc}
+\end{figure}
+
+\subsection{LOSO Results}
+\label{sec:loso_results}
+
+\begin{table}[H]
+\centering
+\setlength{\tabcolsep}{3.5pt}
+\caption{LOSO AUC drop per signal group and domain (positive = important, negative = redundant/harmful).}
+\label{tab:loso}
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Group} & \textbf{ArXiv} & \textbf{GitHub} & \textbf{HackerNews} & \textbf{PubMed} & \textbf{Pile-CC} & \textbf{Wikipedia} \\
+\midrule
+ELBO traj.         & $+0.146$ & $+0.045$ & $+0.141$ & $+0.172$ & $+0.135$ & $+0.141$ \\
+Pred.\ entropy     & $+0.042$ & $+0.014$ & $+0.041$ & $+0.064$ & $+0.035$ & $+0.060$ \\
+Mask consistency   & $-0.002$ & $+0.011$ & $+0.001$ & $-0.001$ & $-0.002$ & $-0.000$ \\
+Hidden norms       & $+0.003$ & $+0.016$ & $+0.001$ & $+0.002$ & $+0.002$ & $+0.010$ \\
+Attn.\ cross-layer & $-0.001$ & $+0.013$ & $+0.005$ & $+0.003$ & $+0.009$ & $+0.003$ \\
+dL/dt              & $-0.004$ & $-0.002$ & $-0.001$ & $-0.002$ & $-0.001$ & $+0.002$ \\
+ELBO var.          & $-0.000$ & $+0.001$ & $-0.001$ & $-0.001$ & $-0.001$ & $-0.000$ \\
+$d^2L/dt^2$        & $-0.002$ & $-0.003$ & $-0.003$ & $-0.001$ & $+0.000$ & $-0.000$ \\
+Attn.\ entropy     & $-0.001$ & $+0.004$ & $+0.003$ & $-0.000$ & $-0.002$ & $+0.001$ \\
+Hidden cosine      & $+0.000$ & $-0.005$ & $-0.002$ & $-0.003$ & $-0.000$ & $-0.001$ \\
+Attn.\ barycenter  & $+0.001$ & $+0.003$ & $-0.001$ & $-0.003$ & $+0.000$ & $-0.003$ \\
+Attn.\ perturbation & $-0.002$ & $-0.003$ & $-0.000$ & $-0.001$ & $+0.000$ & $-0.003$ \\
+Cross-model cos.   & $+0.001$ & $+0.001$ & $-0.001$ & $-0.001$ & $-0.002$ & $+0.011$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Key finding 1: ELBO trajectory dominates.}
+The ELBO trajectory group (loss values at $T=4$ masking ratios) accounts for
+the vast majority of classifier performance. Its LOSO AUC drop ranges from
+$+0.045$ (GitHub) to $+0.172$ (PubMed Central), with a mean of $+0.130$ across
+all domains. This makes intuitive sense: members have systematically lower ELBO
+at all masking ratios after fine-tuning.
+
+\paragraph{Key finding 2: Predictive entropy is the second most valuable group.}
+The prediction entropy at each timestep adds meaningful signal beyond the raw
+ELBO values. Members tend to have lower token prediction entropy (the model is
+more confident about their tokens), contributing a mean LOSO drop of $+0.043$.
+
+\paragraph{Key finding 3: Attention features are largely redundant.}
+Attention entropy, barycenter, perturbation, and cross-layer consistency
+contribute negligibly ($|\Delta| < 0.005$ on average). This suggests the
+ELBO trajectory and entropy signals already capture the membership information
+that attention features encode, and the XGBoost correctly assigns them low weight.
+
+\paragraph{Key finding 4: Derivatives ($dL/dt$, $d^2L/dt^2$) are slightly harmful.}
+The numerical first and second derivatives of the ELBO with respect to $t$
+show small \emph{negative} LOSO drops on most domains, indicating they
+introduce noise. Future work may remove these groups to simplify the feature set.
+
+\subsection{Solo AUC Results}
+\label{sec:solo_results}
+
+\begin{table}[H]
+\centering
+\setlength{\tabcolsep}{3.5pt}
+\caption{Solo AUC: XGBoost trained using only the named signal group's features (3-fold CV). Random baseline = 0.5.}
+\label{tab:solo}
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Group} & \textbf{ArXiv} & \textbf{GitHub} & \textbf{HackerNews} & \textbf{PubMed} & \textbf{Pile-CC} & \textbf{Wikipedia} \\
+\midrule
+ELBO traj.          & 0.774 & 0.692 & 0.839 & 0.751 & 0.821 & 0.749 \\
+Pred.\ entropy      & 0.650 & 0.665 & 0.690 & 0.633 & 0.676 & 0.623 \\
+Mask consistency    & 0.633 & 0.665 & 0.715 & 0.605 & 0.717 & 0.635 \\
+Hidden norms        & 0.526 & 0.639 & 0.519 & 0.531 & 0.615 & 0.553 \\
+Attn.\ cross-layer  & 0.473 & 0.560 & 0.484 & 0.528 & 0.523 & 0.514 \\
+dL/dt               & 0.581 & 0.660 & 0.555 & 0.563 & 0.594 & 0.592 \\
+Hidden cosine       & 0.541 & 0.565 & 0.541 & 0.572 & 0.587 & 0.523 \\
+$d^2L/dt^2$         & 0.535 & 0.584 & 0.553 & 0.514 & 0.550 & 0.549 \\
+Attn.\ entropy      & 0.489 & 0.558 & 0.499 & 0.533 & 0.508 & 0.514 \\
+ELBO var.           & 0.590 & 0.649 & 0.536 & 0.568 & 0.580 & 0.599 \\
+Attn.\ barycenter   & 0.494 & 0.542 & 0.468 & 0.495 & 0.536 & 0.500 \\
+Attn.\ perturbation & 0.523 & 0.557 & 0.500 & 0.524 & 0.561 & 0.521 \\
+Cross-model cos.    & 0.487 & 0.520 & 0.513 & 0.526 & 0.524 & 0.520 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The solo AUC rankings confirm the LOSO findings. The ELBO trajectory alone
+achieves 0.692--0.839 AUC (mean 0.771), approaching SAMA's performance of
+0.777--0.885 while using only 4 scalar features. Predictive entropy solo AUC
+of 0.623--0.690 is also well above chance. All attention-related groups hover
+near 0.5, confirming their low individual discriminative power.
+
+\subsection{Feature Importances}
+\label{sec:feature_importance}
+
+Figure~\ref{fig:feat_imp} shows the top-20 XGBoost feature importances
+averaged across all six domains. The features are named by group and timestep index.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\textwidth]{plots/fig6_feature_importance.pdf}
+  \caption{Top-20 XGBoost feature importances (mean $\pm$ std across 6 domains). Features from the ELBO trajectory group dominate, with ELBO at $\alpha=0.35$ and $\alpha=0.20$ being the most discriminative individual features.}
+  \label{fig:feat_imp}
+\end{figure}
+
+The top features are:
+\begin{enumerate}[nosep]
+  \item \texttt{elbo\_t2\_a0.35} (importance $0.073 \pm 0.027$): ELBO at moderate masking ratio is most discriminative, consistent with the model making the clearest member/non-member distinction at intermediate noise levels.
+  \item \texttt{elbo\_t1\_a0.20} ($0.068 \pm 0.037$): Low-masking-ratio ELBO is also highly informative.
+  \item \texttt{elbo\_t3\_a0.50} ($0.054 \pm 0.013$): High-masking-ratio ELBO.
+  \item \texttt{pred\_entropy\_t2} ($0.040 \pm 0.012$): Predictive entropy at $\alpha=0.35$.
+  \item \texttt{pred\_entropy\_t1} ($0.033 \pm 0.006$): Predictive entropy at $\alpha=0.20$.
+\end{enumerate}
+
+The consistent pattern is that \emph{mid-range masking ratios} ($\alpha \in [0.2, 0.5]$)
+are most informative, while very low masking ($\alpha=0.05$) is less discriminative
+--- possibly because at very low masking, even non-member text can be reconstructed
+trivially from context.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Discussion}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Why do diffusion trajectories leak membership?}
+
+The intuition is that fine-tuning effectively moves the model's parameters to
+locally minimise the ELBO on member documents. After fine-tuning, the model
+has a ``memory'' of these documents encoded in its weights: when evaluated on
+a member document, the ELBO is systematically lower and the prediction
+confidence is higher, compared to a document the model has never seen.
+The 4-point ELBO trajectory captures this effect directly and efficiently.
+
+Importantly, this signal is \emph{more informative than the scalar NLL}
+used by the Loss attack because the trajectory over multiple masking ratios
+provides a richer fingerprint. Different masking levels stress the model
+differently: at low $\alpha$, most tokens are visible and the task is easy;
+at high $\alpha$, the model must rely heavily on its ``memorised'' knowledge.
+The cross-ratio pattern of how quickly the ELBO decays with $\alpha$ is
+characteristic of memorised vs.\ non-memorised text.
+
+\subsection{Domain-dependent privacy risk}
+
+Our results show clear domain stratification. The ordering
+Pile-CC $>$ HackerNews $>$ Wikipedia $>$ ArXiv $>$ PubMed $>$ GitHub
+is consistent across both SAMA and the white-box classifier, and inversely
+correlated with domain specialisation. Web text and informal discussion are
+hardest to protect; biomedical and code domains are safer, though no domain
+achieves AUC near 0.5.
+
+\textbf{Implication}: privacy risk from MIA on MDLMs is not a property of
+the model architecture alone, but depends heavily on the training data domain.
+Practitioners fine-tuning MDLMs on sensitive web-scraped text face significantly
+higher risk than those fine-tuning on structured scientific text.
+
+\subsection{Limitations}
+
+\begin{itemize}[nosep]
+  \item \textbf{Single model}: Results are for one MDLM (Qwen3-0.6B). Larger or differently-trained MDLMs may exhibit different memorisation characteristics.
+  \item \textbf{Small fine-tuning set}: We fine-tune on 1{,}000 samples, which induces strong memorisation. Real-world fine-tuning on larger datasets would likely show weaker and noisier signals.
+  \item \textbf{Oracle fine-tuning}: We assume the attacker knows the exact member set used for fine-tuning (the ``white-box'' threat model). Practical attackers with only query access face additional challenges.
+  \item \textbf{Feature engineering}: The 46-dimensional feature set was hand-designed. Learned representations (e.g., using a small network to embed the trajectory) may perform better.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Infrastructure and Reproducibility}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Compute}
+
+Six NVIDIA L4 GPUs (24\,GB VRAM) were provisioned simultaneously on JarvisLabs
+IN2 region. Each domain ran on its own instance. Total wall-clock time per
+domain was approximately 2h 50min (dominated by feature extraction, $\sim$3.5s/sample).
+
+\begin{table}[H]
+\centering
+\caption{Approximate per-stage compute time on a single L4 GPU.}
+\begin{tabular}{llr}
+\toprule
+\textbf{Stage} & \textbf{Operation} & \textbf{Time} \\
+\midrule
+prepare\_data       & HF download + tokenize 2000 samples & 2--3 min \\
+finetune            & 5 epochs, bs=8, 1000 members         & 6--7 min \\
+verify\_memorization & ELBO on 2000 samples, 8 ratios       & 4--5 min \\
+run\_sama           & SAMA attack, $T=4$, $N=128$, 2000 samples & 15--20 min \\
+run\_attacks        & Loss/Zlib/Ratio NLL (mc=4), 2000 samples  & 12--15 min \\
+run\_signals        & 46-dim extraction, 2000 samples      & $\sim$2 hr \\
+train\_classifier   & 5-fold XGB+MLP+LGB + full-data fit   & 5--8 min \\
+benchmark + ablation & 3-fold ablation (13 groups)          & 8--12 min \\
+\midrule
+\textbf{Total}      & &  $\sim$2h 50min \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Saved Artifacts}
+
+The following files are saved per domain and included in this release:
+
+\begin{description}[nosep]
+  \item[\texttt{X.pt}] Feature matrix $[N, 46]$.
+  \item[\texttt{y.pt}] Labels $[N]$ (1 = member, 0 = non-member).
+  \item[\texttt{X\_per\_group.pt}] Dict: group name $\to$ tensor slice $[N, d_g]$.
+  \item[\texttt{signal\_names.pt}] List of 46 feature name strings.
+  \item[\texttt{raw\_signals.pt}] Per-sample raw trajectories per group.
+  \item[\texttt{verify\_elbo.pt}] Per-sample ELBO tensors (base and FT, members and non-members).
+  \item[\texttt{sama\_scores.pt}, \texttt{loss\_scores.pt}, \texttt{zlib\_scores.pt}, \texttt{ratio\_scores.pt}] Attack score vectors $[N]$ + labels.
+  \item[\texttt{classifier\_results.pt}] OOF probabilities, bootstrap metrics, feature importances.
+  \item[\texttt{ablation\_results.pt}] LOSO and solo AUC per group.
+  \item[\texttt{benchmark.pt}] Full benchmark table (all methods, all FPR thresholds).
+\end{description}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+% ══════════════════════════════════════════════════════════════════════════════
+
+We demonstrate that masked diffusion language models are substantially more
+vulnerable to membership inference than previously recognised when white-box
+trajectory signals are exploited. Across six diverse text domains, our
+XGBoost classifier trained on 46 diffusion-trajectory features achieves
+AUC-ROC of 0.80--0.93, compared to SAMA's 0.78--0.88 and black-box baselines
+of 0.63--0.72.
+
+The ablation study reveals a clear hierarchy of signal groups: the ELBO
+trajectory alone accounts for the vast majority of discriminative power
+(mean LOSO drop $+0.13$), while predictive entropy adds a secondary boost
+(mean drop $+0.043$). Attention-based features are largely redundant,
+suggesting that a highly compact 8-dimensional feature vector (4 ELBO values
++ 4 entropy values) may suffice for practical MIA on MDLMs.
+
+Our domain analysis confirms that privacy risk is domain-dependent:
+Pile-CC and HackerNews (web/informal text) are most vulnerable, while GitHub
+(code) and PubMed (biomedical) are comparatively safer --- though still far
+from private with AUC above 0.80.
+
+These results motivate further work on privacy-preserving fine-tuning of MDLMs,
+particularly differential privacy mechanisms that could flatten the ELBO trajectory
+gap between members and non-members.
+
+% ══════════════════════════════════════════════════════════════════════════════
+% References (manual for now — add .bib entries if needed)
+% ══════════════════════════════════════════════════════════════════════════════
+\section*{References}
+
+\begin{itemize}[nosep,leftmargin=1.5em]
+  \item Carlini, N., et al.\ (2021). \textit{Extracting Training Data from Large Language Models}. USENIX Security.
+  \item Duan, M., et al.\ (2024). \textit{Do Membership Inference Attacks Work on Large Language Models?} (MIMIR). COLM 2024.
+  \item Shi, W., et al.\ (2024). \textit{Detecting Pretraining Data from Large Language Models}. ICLR 2024.
+  \item Ye, J., et al.\ (2024). \textit{Score Alignment-based Membership Attacks (SAMA)}. arXiv preprint.
+  \item Shi, J., et al.\ (2024). \textit{Simplified and Generalized Masked Diffusion for Discrete Data} (MDLM). NeurIPS 2024.
+  \item Qwen Team (2025). \textit{Qwen3 Technical Report}. Alibaba Group.
+\end{itemize}
+
+\end{document}
